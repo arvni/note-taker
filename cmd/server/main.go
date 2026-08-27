@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/arvinizadi/fathom/internal/audit"
+	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/config"
 	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
@@ -140,7 +141,17 @@ func serve(cfg *config.Config) {
 	// Token lifecycle: refresh under a Redis lock, revoke, and detect revocation.
 	tokenMgr := tokens.NewManager(credStore, zohoClient, tokens.NewRedisLocker(redisClient), auditLog, onboardingSvc)
 	revoker := tokens.NewRevoker(credStore, zohoClient, empRepo, auditLog)
-	_ = tokenMgr // used by sync jobs (Phase 6/8)
+	offboarder := tokens.NewOffboarder(credStore, zohoClient, empRepo, auditLog)
+
+	// Directory reconciler: new employees are invited, inactive ones offboarded
+	// (spec §20, §19). The directory source that drives it is wired once the
+	// org-level auth model is resolved (spec §54).
+	reconciler := directory.NewReconciler(empRepo, onboardingSvc, offboarder)
+
+	// Calendar discovery + scan (spec §27-32), driven per authorized employee by
+	// the sync loop in Phase 8.
+	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calendar.NewRepo(pool), empRepo, auditLog)
+	_, _ = reconciler, calSvc // consumed by the worker sync loops (Phase 8)
 
 	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{
 		Onboarding:   onbRepo,

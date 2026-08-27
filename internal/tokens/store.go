@@ -120,3 +120,11 @@ func (s *Store) SetStatus(ctx context.Context, employeeID int64, status string) 
 		WHERE employee_id = $2 AND provider = 'zoho'`, status, employeeID)
 	return err
 }
+
+// Delete removes the stored credential entirely (spec §19 offboarding: remove
+// stored tokens). Unlike SetStatus(revoked), this erases the encrypted tokens.
+func (s *Store) Delete(ctx context.Context, employeeID int64) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM oauth_credentials WHERE employee_id = $1 AND provider = 'zoho'`, employeeID)
+	return err
+}
