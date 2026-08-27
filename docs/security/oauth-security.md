@@ -1,16 +1,39 @@
 # Oauth Security
 
-> Status: skeleton (spec §49). Fill in during the phase that implements the
-> corresponding controls. Do not treat example values as legally reviewed (§50-52).
+> Status: in progress (spec §8-13, §25-26, §53).
 
-## Scope
+## Verified Zoho API facts (confirmed against official docs, 2026-08)
 
-TODO
+| Item | Value | Source |
+|---|---|---|
+| Authorize | `GET {accounts}/oauth/v2/auth` | Zoho Accounts OAuth v2 |
+| Token | `POST {accounts}/oauth/v2/token` | Zoho Accounts OAuth v2 |
+| Revoke | `POST {accounts}/oauth/v2/token/revoke` | Zoho Accounts OAuth v2 |
+| Identity | `GET {accounts}/oauth/user/info` — returns `ZUID`, `Email`, `Display_Name`, `First_Name`, `Last_Name` | Zoho Accounts |
+| List calendars | `GET /api/v1/calendars` → `{"calendars":[…]}`; fields `uid`,`id`,`name`,`type`/`caltype`,`timezone`,`owner`,`description`,`isdefault`,`color` | zoho.com/calendar/help/api/get-calendar-list.html |
+| List events | `GET /api/v1/calendars/{uid}/events` — **`range` param is MANDATORY**, span ≤ 31 days, format `yyyyMMdd'T'HHmmss'Z'`; event fields `uid`,`title`,`location`,`description`,`start`,`end`,`lastmodifiedtime` | zoho.com/calendar/help/api/get-events-list.html |
+| Auth header | `Authorization: Zoho-oauthtoken {access_token}` | Zoho API |
+| Access token TTL | ~1 hour (spec §15) | Zoho |
 
-## Controls
+## Scope review (spec §53)
 
-TODO
+| Scope | Why | Removable? |
+|---|---|---|
+| `ZohoCalendar.calendar.READ` | discover calendars (§27) | required |
+| `ZohoCalendar.event.READ` | read events for detection (§29) | required |
+| `aaaserver.profile.READ` | `/oauth/user/info` identity binding (§25-26); without it Zoho returns `INVALID_OAUTHSCOPE` | required for binding |
+
+No Zoho Mail scopes (§33). No `.ALL` scopes (§11). Write scopes deferred until a
+real need is established (§53).
+
+## Notes
+
+- Event objects expose no dedicated conference/URL field, so meeting detection
+  scans `location` + `description` text (spec §29 approach confirmed correct).
+- `accounts` base is data-center specific (`.com`/`.eu`/`.in`/`.com.au`); set
+  `ZOHO_ACCOUNTS_BASE` per the company's Zoho DC.
 
 ## Open questions
 
-TODO
+- §54 org-level vs per-user authorization — resolve during the POC against a real
+  test account.

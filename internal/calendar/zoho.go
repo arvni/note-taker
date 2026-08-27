@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -38,7 +39,7 @@ type Event struct {
 	Description string
 	Start       string
 	End         string
-	UpdatedAt   string
+	UpdatedAt   string // maps to Zoho lastmodifiedtime (spec §32 source_updated)
 }
 
 // ListCalendars retrieves calendars for the authenticated user (spec §27).
@@ -56,10 +57,19 @@ func (c *APIClient) ListCalendars(ctx context.Context, accessToken string) ([]Ca
 	return out.Calendars, nil
 }
 
-// ListEvents retrieves events for a calendar (spec §29). The response shape is
-// normalized defensively since Zoho field names vary by API version.
-func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID string) ([]Event, error) {
-	body, err := c.get(ctx, accessToken, "/calendars/"+calendarUID+"/events")
+// ListEvents retrieves events for a calendar within [start, end] (spec §29).
+// Zoho requires a mandatory `range` parameter and the span cannot exceed 31 days
+// (per Zoho Calendar API docs). Times are formatted as yyyyMMdd'T'HHmmss'Z'.
+func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID string, start, end time.Time) ([]Event, error) {
+	if end.Sub(start) > 31*24*time.Hour {
+		return nil, fmt.Errorf("zoho events: range %s..%s exceeds 31-day maximum", start, end)
+	}
+	rng := fmt.Sprintf(`{"start":"%s","end":"%s"}`,
+		start.UTC().Format("20060102T150405Z"), end.UTC().Format("20060102T150405Z"))
+	q := url.Values{}
+	q.Set("range", rng)
+
+	body, err := c.get(ctx, accessToken, "/calendars/"+calendarUID+"/events?"+q.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +86,8 @@ func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID str
 			Title:       str(m["title"]),
 			Location:    str(m["location"]),
 			Description: str(m["description"]),
-			Start:       str(m["dateandtime"]),
+			Start:       str(m["start"]),
+			End:         str(m["end"]),
 			UpdatedAt:   str(m["lastmodifiedtime"]),
 		})
 	}

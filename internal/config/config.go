@@ -57,7 +57,7 @@ func Load() (*Config, error) {
 			RedirectURI:  env("ZOHO_REDIRECT_URI", ""),
 			AccountsBase: env("ZOHO_ACCOUNTS_BASE", "https://accounts.zoho.com"),
 			CalendarBase: env("ZOHO_CALENDAR_BASE", "https://calendar.zoho.com/api/v1"),
-			Scopes:       splitCSV(env("ZOHO_SCOPES", "ZohoCalendar.calendar.READ,ZohoCalendar.event.READ")),
+			Scopes:       splitCSV(env("ZOHO_SCOPES", "ZohoCalendar.calendar.READ,ZohoCalendar.event.READ,aaaserver.profile.READ")),
 		},
 
 		OnboardingTokenTTL:   dur("ONBOARDING_TOKEN_TTL", 168*time.Hour),

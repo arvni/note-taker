@@ -86,7 +86,10 @@ func main() {
 	// Steps 5-6: list events + detect meeting (spec §29).
 	if len(cals) > 0 {
 		fmt.Println("── Steps 5-6: List events + detect meetings ──")
-		evs, err := cal.ListEvents(ctx, tok.AccessToken, cals[0].UID)
+		// Zoho requires a range and caps it at 31 days; scan the next 30.
+		from := time.Now()
+		to := from.Add(30 * 24 * time.Hour)
+		evs, err := cal.ListEvents(ctx, tok.AccessToken, cals[0].UID, from, to)
 		if err != nil {
 			log.Printf("list events failed (non-fatal for POC): %v", err)
 		} else {
