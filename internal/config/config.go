@@ -30,6 +30,12 @@ type Config struct {
 	EmailProvider string
 
 	DirectorySyncInterval time.Duration
+
+	CompanyName string
+	AppName     string
+	SupportAddr string
+	PrivacyURL  string
+	TermsURL    string
 }
 
 type ZohoConfig struct {
@@ -69,6 +75,12 @@ func Load() (*Config, error) {
 		EmailProvider: env("EMAIL_PROVIDER", ""),
 
 		DirectorySyncInterval: dur("DIRECTORY_SYNC_INTERVAL", time.Hour),
+
+		CompanyName: env("COMPANY_NAME", "Your Company"),
+		AppName:     env("APP_NAME", "Calendar Bridge"),
+		SupportAddr: env("SUPPORT_ADDR", ""),
+		PrivacyURL:  env("PRIVACY_URL", ""),
+		TermsURL:    env("TERMS_URL", ""),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).
@@ -117,6 +129,27 @@ func splitCSV(s string) []string {
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ReadablePermissions maps the requested Zoho scopes to human-readable
+// descriptions for the consent email and page (spec §22-23).
+func (c *Config) ReadablePermissions() []string {
+	labels := map[string]string{
+		"ZohoCalendar.calendar.READ": "Read your calendar list",
+		"ZohoCalendar.event.READ":    "Read your calendar events",
+		"ZohoCalendar.event.CREATE":  "Create calendar events",
+		"ZohoCalendar.event.UPDATE":  "Update calendar events",
+		"aaaserver.profile.READ":     "Read your basic Zoho profile (to verify your identity)",
+	}
+	out := make([]string, 0, len(c.Zoho.Scopes))
+	for _, s := range c.Zoho.Scopes {
+		if lbl, ok := labels[s]; ok {
+			out = append(out, lbl)
+		} else {
+			out = append(out, s)
 		}
 	}
 	return out

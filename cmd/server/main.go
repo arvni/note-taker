@@ -15,8 +15,16 @@ import (
 	"os"
 	"time"
 
+	"github.com/arvinizadi/fathom/internal/audit"
 	"github.com/arvinizadi/fathom/internal/config"
+	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
+	"github.com/arvinizadi/fathom/internal/directory"
+	"github.com/arvinizadi/fathom/internal/httpx"
+	"github.com/arvinizadi/fathom/internal/oauth"
+	"github.com/arvinizadi/fathom/internal/onboarding"
+	"github.com/arvinizadi/fathom/internal/tokens"
+	"github.com/arvinizadi/fathom/web"
 )
 
 func main() {
@@ -24,12 +32,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		runMigrate(cfg, os.Args[2:])
 		return
 	}
-
 	serve(cfg)
 }
 
@@ -70,11 +76,46 @@ func runMigrate(cfg *config.Config, args []string) {
 
 func serve(cfg *config.Config) {
 	ctx := context.Background()
+
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("server: db: %v", err)
 	}
 	defer pool.Close()
+
+	cipher, err := crypto.NewFromBase64Key(cfg.CryptoMasterKey)
+	if err != nil {
+		log.Fatalf("server: crypto key (set CRYPTO_MASTER_KEY, e.g. openssl rand -base64 32): %v", err)
+	}
+	tmpl, err := web.Templates()
+	if err != nil {
+		log.Fatalf("server: templates: %v", err)
+	}
+
+	auditLog := audit.New(audit.NewPostgresSink(pool))
+	empRepo := directory.NewRepo(pool)
+	onbRepo := onboarding.NewRepo(pool)
+	stateRepo := oauth.NewStateRepo(pool)
+	credStore := tokens.NewStore(pool, cipher)
+	zohoClient := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret,
+		cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, cfg.Zoho.Scopes)
+
+	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{
+		Onboarding:   onbRepo,
+		States:       stateRepo,
+		Employees:    empRepo,
+		Creds:        credStore,
+		Client:       zohoClient,
+		Audit:        auditLog,
+		Templates:    tmpl,
+		AccountsBase: cfg.Zoho.AccountsBase,
+		CompanyName:  cfg.CompanyName,
+		AppName:      cfg.AppName,
+		Permissions:  cfg.ReadablePermissions(),
+		SupportAddr:  cfg.SupportAddr,
+		PrivacyURL:   cfg.PrivacyURL,
+		TermsURL:     cfg.TermsURL,
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -89,6 +130,7 @@ func serve(cfg *config.Config) {
 		}
 		fmt.Fprintln(w, "ready")
 	})
+	oauthHandler.Register(mux)
 
 	log.Printf("server listening on %s (env=%s)", cfg.HTTPAddr, cfg.AppEnv)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, mux))

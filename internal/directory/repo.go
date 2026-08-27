@@ -150,3 +150,14 @@ func (r *Repo) SetOnboardingStatus(ctx context.Context, org db.OrgID, id int64, 
 		WHERE organization_id = $2 AND id = $3`, status, org, id)
 	return err
 }
+
+// SetZohoUserID binds an employee to their authoritative Zoho account id after
+// OAuth identity verification (spec §25-26). It is only set once establishing
+// the binding; callers must verify a pre-existing id matches before rebinding.
+func (r *Repo) SetZohoUserID(ctx context.Context, org db.OrgID, id int64, zohoUserID string) error {
+	t := r.pool.Tenant(org)
+	_, err := t.Exec(ctx, `
+		UPDATE employees SET zoho_user_id = $1, updated_at = now()
+		WHERE organization_id = $2 AND id = $3`, zohoUserID, org, id)
+	return err
+}

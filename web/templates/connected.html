@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Connected</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;line-height:1.5;max-width:560px;margin:0 auto;padding:24px">
+  <h2 style="margin-top:0;color:#22803c">Zoho authorization successful</h2>
+
+  <p><strong>Account</strong><br>{{.EmployeeEmail}}</p>
+
+  <p><strong>Permissions</strong></p>
+  <ul>
+    {{range .Permissions}}<li>&#10003; {{.}}</li>{{end}}
+  </ul>
+
+  <p><strong>Status:</strong> Connected</p>
+
+  <p style="color:#555;font-size:14px">You can close this window. Your calendar
+  will be monitored according to the company policy.</p>
+</body>
+</html>
