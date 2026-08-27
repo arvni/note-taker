@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -59,10 +60,21 @@ func main() {
 	calRepo := calendar.NewRepo(pool)
 	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calRepo, empRepo, auditLog)
 
-	// Destination: the Google Calendar that Fathom watches (spec §42). The
-	// service-account TokenSource is wired from GOOGLE credentials; until those
-	// are configured a static token placeholder is used and sync is skipped.
-	gcal := google.NewClient(cfg.GoogleCalendarBase, cfg.GoogleCalendarID, google.StaticToken(cfg.GoogleAccessToken))
+	// Destination: the Google Calendar that Fathom watches (spec §42). Prefer a
+	// service-account key (JWT-bearer exchange); fall back to a static token.
+	var gts google.TokenSource = google.StaticToken(cfg.GoogleAccessToken)
+	if cfg.GoogleCredentialsFile != "" {
+		keyJSON, err := os.ReadFile(cfg.GoogleCredentialsFile)
+		if err != nil {
+			log.Fatalf("worker: read Google credentials: %v", err)
+		}
+		gts, err = google.NewServiceAccountTokenSource(keyJSON, google.CalendarScope, cfg.GoogleSubject)
+		if err != nil {
+			log.Fatalf("worker: Google service account: %v", err)
+		}
+		log.Print("worker: using Google service-account credentials")
+	}
+	gcal := google.NewClient(cfg.GoogleCalendarBase, cfg.GoogleCalendarID, gts)
 	engine := sync.NewEngine(calSvc, gcal, calRepo, auditLog)
 
 	log.Printf("worker started (env=%s); sync interval=%s; purge interval=%s",
