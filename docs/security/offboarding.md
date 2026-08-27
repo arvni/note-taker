@@ -1,16 +1,16 @@
 # Offboarding
 
-> Status: skeleton (spec §49). Fill in during the phase that implements the
-> corresponding controls. Do not treat example values as legally reviewed (§50-52).
+When an employee becomes inactive in the directory (spec §19), the reconciler
+invokes `tokens.Offboarder.Offboard`, which:
 
-## Scope
+1. Stops calendar sync (implicit — a disabled employee is not synced).
+2. Cancels queued jobs (implicit — no job runs for a disabled employee).
+3. Revokes OAuth access at Zoho (best-effort).
+4. **Removes the stored (encrypted) tokens** — deletes the `oauth_credentials` row.
+5. Marks the employee `disabled`.
+6. Preserves minimal audit information (`employee_disabled`).
+7. Stops accessing the calendar (no credential remains).
 
-TODO
-
-## Controls
-
-TODO
-
-## Open questions
-
-TODO
+The operation is idempotent. This differs from **revocation** (spec §17), which
+retains encrypted tokens until the retention window permits deletion; offboarding
+deletes immediately.

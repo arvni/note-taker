@@ -51,6 +51,10 @@ type Config struct {
 	RateLimitConnect int
 	RateLimitAPI     int
 	RateLimitWindow  time.Duration
+
+	RetentionPurgeInterval time.Duration
+	RetentionAudit         time.Duration
+	RetentionMappings      time.Duration
 }
 
 type ZohoConfig struct {
@@ -111,6 +115,10 @@ func Load() (*Config, error) {
 		RateLimitConnect: intEnv("RATE_LIMIT_CONNECT", 20),
 		RateLimitAPI:     intEnv("RATE_LIMIT_API", 60),
 		RateLimitWindow:  dur("RATE_LIMIT_WINDOW", 10*time.Minute),
+
+		RetentionPurgeInterval: dur("RETENTION_PURGE_INTERVAL", 24*time.Hour),
+		RetentionAudit:         dur("RETENTION_AUDIT", 365*24*time.Hour),
+		RetentionMappings:      dur("RETENTION_MAPPINGS", 365*24*time.Hour),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).

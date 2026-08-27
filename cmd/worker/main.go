@@ -8,6 +8,7 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/arvinizadi/fathom/internal/audit"
 	"github.com/arvinizadi/fathom/internal/calendar"
@@ -18,6 +19,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/google"
 	"github.com/arvinizadi/fathom/internal/oauth"
 	"github.com/arvinizadi/fathom/internal/redisx"
+	"github.com/arvinizadi/fathom/internal/retention"
 	"github.com/arvinizadi/fathom/internal/sync"
 	"github.com/arvinizadi/fathom/internal/tokens"
 )
@@ -63,7 +65,19 @@ func main() {
 	gcal := google.NewClient(cfg.GoogleCalendarBase, cfg.GoogleCalendarID, google.StaticToken(cfg.GoogleAccessToken))
 	engine := sync.NewEngine(calSvc, gcal, calRepo, auditLog)
 
-	log.Printf("worker started (env=%s); sync interval=%s", cfg.AppEnv, cfg.DirectorySyncInterval)
+	log.Printf("worker started (env=%s); sync interval=%s; purge interval=%s",
+		cfg.AppEnv, cfg.DirectorySyncInterval, cfg.RetentionPurgeInterval)
+
+	// Retention purge loop (spec §50) runs alongside the sync loop.
+	purger := retention.NewPurger(pool, retention.Policy{
+		AuditLog:      cfg.RetentionAudit,
+		EventMappings: cfg.RetentionMappings,
+		ExpiredTokens: 7 * 24 * time.Hour,
+	})
+	go directory.RunPeriodic(ctx, cfg.RetentionPurgeInterval, func(ctx context.Context) error {
+		_, err := purger.Purge(ctx)
+		return err
+	})
 
 	directory.RunPeriodic(ctx, cfg.DirectorySyncInterval, func(ctx context.Context) error {
 		return syncAllEmployees(ctx, empRepo, engine)
