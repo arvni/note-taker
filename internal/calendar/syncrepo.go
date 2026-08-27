@@ -2,7 +2,10 @@ package calendar
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // PendingEvent is a mapping row the sync engine needs to act on.
@@ -99,4 +102,39 @@ func (r *Repo) MarkCancelled(ctx context.Context, mappingID int64) error {
 		UPDATE event_mappings SET cancelled_at = now(), updated_at = now()
 		WHERE id = $1`, mappingID)
 	return err
+}
+
+// RecordedMatch identifies the employee/event a Fathom recording corresponds to.
+type RecordedMatch struct {
+	EmployeeID    int64
+	SourceEventID string
+	Title         string
+}
+
+// FindByMeetingURL correlates a Fathom webhook's meeting_url back to a synced
+// meeting so the recording chain can be confirmed and audited (spec §42).
+func (r *Repo) FindByMeetingURL(ctx context.Context, meetingURL string) (*RecordedMatch, bool, error) {
+	var m RecordedMatch
+	err := r.pool.QueryRow(ctx, `
+		SELECT employee_id, source_event_id, coalesce(title,'')
+		FROM event_mappings
+		WHERE meeting_url = $1
+		ORDER BY updated_at DESC
+		LIMIT 1`, meetingURL).Scan(&m.EmployeeID, &m.SourceEventID, &m.Title)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return &m, true, nil
+}
+
+// Now returns the database clock time, used as the scan boundary so it is
+// comparable to last_seen_at (also set by the DB clock), avoiding app/DB clock
+// skew when deciding cancellations.
+func (r *Repo) Now(ctx context.Context) (time.Time, error) {
+	var t time.Time
+	err := r.pool.QueryRow(ctx, `SELECT now()`).Scan(&t)
+	return t, err
 }

@@ -40,6 +40,9 @@ type Config struct {
 	GoogleCalendarBase string
 	GoogleCalendarID   string
 	GoogleAccessToken  string
+
+	FathomAPIBase string
+	FathomAPIKey  string
 }
 
 type ZohoConfig struct {
@@ -89,6 +92,9 @@ func Load() (*Config, error) {
 		GoogleCalendarBase: env("GOOGLE_CALENDAR_BASE", "https://www.googleapis.com/calendar/v3"),
 		GoogleCalendarID:   env("GOOGLE_CALENDAR_ID", ""),
 		GoogleAccessToken:  env("GOOGLE_ACCESS_TOKEN", ""),
+
+		FathomAPIBase: env("FATHOM_API_BASE", "https://api.fathom.ai/external/v1"),
+		FathomAPIKey:  env("FATHOM_API_KEY", ""),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).

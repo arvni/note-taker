@@ -150,7 +150,8 @@ func serve(cfg *config.Config) {
 
 	// Calendar discovery + scan (spec §27-32), driven per authorized employee by
 	// the sync loop in Phase 8.
-	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calendar.NewRepo(pool), empRepo, auditLog)
+	calRepo := calendar.NewRepo(pool)
+	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calRepo, empRepo, auditLog)
 	_, _ = reconciler, calSvc // consumed by the worker sync loops (Phase 8)
 
 	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{
@@ -185,6 +186,7 @@ func serve(cfg *config.Config) {
 	})
 	oauthHandler.Register(mux)
 	httpx.NewAPIHandler(revoker).Register(mux)
+	httpx.NewFathomHandler(calRepo, auditLog).Register(mux)
 
 	log.Printf("server listening on %s (env=%s)", cfg.HTTPAddr, cfg.AppEnv)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, mux))

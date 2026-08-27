@@ -31,6 +31,7 @@ type Destination interface {
 
 // MappingRepo is the sync-state persistence (calendar.Repo).
 type MappingRepo interface {
+	Now(ctx context.Context) (time.Time, error)
 	ListToCreate(ctx context.Context, employeeID int64) ([]calendar.PendingEvent, error)
 	ListToUpdate(ctx context.Context, employeeID int64) ([]calendar.PendingEvent, error)
 	ListToCancel(ctx context.Context, employeeID int64, scanStart time.Time) ([]calendar.PendingEvent, error)
@@ -61,7 +62,12 @@ type Report struct {
 // SyncEmployee scans the source, then reconciles destination events (spec §42).
 func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int64) (Report, error) {
 	var rep Report
-	scanStart := time.Now()
+	// Use the DB clock so scanStart is comparable to last_seen_at (also DB-set),
+	// avoiding false cancellations from app/DB clock skew.
+	scanStart, err := e.repo.Now(ctx)
+	if err != nil {
+		return rep, err
+	}
 
 	if _, err := e.scanner.Scan(ctx, org, employeeID); err != nil {
 		return rep, err
