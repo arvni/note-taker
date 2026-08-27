@@ -130,3 +130,23 @@ func (r *Repo) UpdateEmail(ctx context.Context, org db.OrgID, id int64, email st
 		WHERE organization_id = $2 AND id = $3`, email, org, id)
 	return err
 }
+
+// GetByID returns the employee by id within the org.
+func (r *Repo) GetByID(ctx context.Context, org db.OrgID, id int64) (*Employee, error) {
+	t := r.pool.Tenant(org)
+	row := t.QueryRow(ctx, `
+		SELECT id, organization_id, coalesce(zoho_user_id,''), email, coalesce(name,''),
+		       coalesce(department,''), status, onboarding_status, created_at, updated_at
+		FROM employees
+		WHERE organization_id = $1 AND id = $2`, org, id)
+	return scanEmployee(row)
+}
+
+// SetOnboardingStatus updates the employee's onboarding lifecycle state (spec §4).
+func (r *Repo) SetOnboardingStatus(ctx context.Context, org db.OrgID, id int64, status string) error {
+	t := r.pool.Tenant(org)
+	_, err := t.Exec(ctx, `
+		UPDATE employees SET onboarding_status = $1, updated_at = now()
+		WHERE organization_id = $2 AND id = $3`, status, org, id)
+	return err
+}

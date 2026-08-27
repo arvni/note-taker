@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Authorize {{.AppName}}</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
+  <h2 style="margin-top:0">{{.CompanyName}} — {{.AppName}}</h2>
+
+  <p>You are about to authorize <strong>{{.AppName}}</strong> to access the Zoho
+  Calendar for:</p>
+
+  <p style="font-size:18px"><strong>{{.EmployeeEmail}}</strong></p>
+
+  <h3>Requested permissions</h3>
+  <ul>
+    {{range .Permissions}}<li>{{.}}</li>{{end}}
+  </ul>
+
+  <p style="color:#555">
+    The application does not request access to your Zoho Mail or password.
+  </p>
+
+  <p style="margin:28px 0">
+    <a href="{{.StartURL}}"
+       style="background:#2b6cb0;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;display:inline-block">
+      Continue to Zoho
+    </a>
+  </p>
+
+  <p style="color:#555;font-size:14px">
+    {{if .PrivacyURL}}<a href="{{.PrivacyURL}}">Privacy policy</a>{{if .TermsURL}} &middot; {{end}}{{end}}
+    {{if .TermsURL}}<a href="{{.TermsURL}}">Terms</a>{{end}}
+  </p>
+</body>
+</html>
