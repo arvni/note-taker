@@ -37,12 +37,24 @@ func TestNoRawTenantQueries(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for i, line := range strings.Split(string(data), "\n") {
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
 			l := strings.ToLower(line)
 			if !tableRe.MatchString(l) {
 				continue
 			}
-			if strings.Contains(l, "organization_id") || strings.Contains(l, "tenant-scope-exempt") {
+			// SQL literals span multiple lines, so inspect a window around the
+			// match (the WHERE ... organization_id clause typically follows the
+			// FROM/JOIN a line or two later).
+			lo, hi := i-3, i+10
+			if lo < 0 {
+				lo = 0
+			}
+			if hi > len(lines) {
+				hi = len(lines)
+			}
+			window := strings.ToLower(strings.Join(lines[lo:hi], "\n"))
+			if strings.Contains(window, "organization_id") || strings.Contains(window, "tenant-scope-exempt") {
 				continue
 			}
 			rel, _ := filepath.Rel(root, path)

@@ -28,6 +28,8 @@ type Config struct {
 
 	EmailFrom     string
 	EmailProvider string
+
+	DirectorySyncInterval time.Duration
 }
 
 type ZohoConfig struct {
@@ -65,6 +67,8 @@ func Load() (*Config, error) {
 
 		EmailFrom:     env("EMAIL_FROM", ""),
 		EmailProvider: env("EMAIL_PROVIDER", ""),
+
+		DirectorySyncInterval: dur("DIRECTORY_SYNC_INTERVAL", time.Hour),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).
