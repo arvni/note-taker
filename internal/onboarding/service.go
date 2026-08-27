@@ -120,3 +120,10 @@ func (s *Service) Invite(ctx context.Context, org db.OrgID, employeeID int64) er
 	}
 	return nil
 }
+
+// Reconnect re-invites an employee whose credential became invalid, sending a
+// fresh consent link (spec §18, §45). Reauthorization is a full repeat of the
+// onboarding consent, so it delegates to Invite. Satisfies tokens.Reconnector.
+func (s *Service) Reconnect(ctx context.Context, org db.OrgID, employeeID int64) error {
+	return s.Invite(ctx, org, employeeID)
+}

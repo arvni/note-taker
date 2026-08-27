@@ -20,12 +20,29 @@ import (
 	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
+	"github.com/arvinizadi/fathom/internal/email"
 	"github.com/arvinizadi/fathom/internal/httpx"
 	"github.com/arvinizadi/fathom/internal/oauth"
 	"github.com/arvinizadi/fathom/internal/onboarding"
+	"github.com/arvinizadi/fathom/internal/redisx"
 	"github.com/arvinizadi/fathom/internal/tokens"
 	"github.com/arvinizadi/fathom/web"
 )
+
+// empStore adapts *directory.Repo to onboarding.EmployeeStore.
+type empStore struct{ repo *directory.Repo }
+
+func (a empStore) GetByID(ctx context.Context, org db.OrgID, id int64) (string, string, error) {
+	e, err := a.repo.GetByID(ctx, org, id)
+	if err != nil {
+		return "", "", err
+	}
+	return e.Email, e.Name, nil
+}
+
+func (a empStore) SetOnboardingStatus(ctx context.Context, org db.OrgID, id int64, status string) error {
+	return a.repo.SetOnboardingStatus(ctx, org, id, status)
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -92,6 +109,12 @@ func serve(cfg *config.Config) {
 		log.Fatalf("server: templates: %v", err)
 	}
 
+	redisClient, err := redisx.Connect(ctx, cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("server: redis: %v", err)
+	}
+	defer redisClient.Close()
+
 	auditLog := audit.New(audit.NewPostgresSink(pool))
 	empRepo := directory.NewRepo(pool)
 	onbRepo := onboarding.NewRepo(pool)
@@ -99,6 +122,25 @@ func serve(cfg *config.Config) {
 	credStore := tokens.NewStore(pool, cipher)
 	zohoClient := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret,
 		cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, cfg.Zoho.Scopes)
+
+	// Onboarding service doubles as the reconnect trigger when a credential goes
+	// invalid (spec §18, §45).
+	onboardingSvc := onboarding.NewService(onbRepo, empStore{empRepo}, email.LogSender{}, auditLog, tmpl, onboarding.Config{
+		BaseURL:     cfg.PublicBaseURL,
+		CompanyName: cfg.CompanyName,
+		AppName:     cfg.AppName,
+		Permissions: cfg.ReadablePermissions(),
+		SupportAddr: cfg.SupportAddr,
+		PrivacyURL:  cfg.PrivacyURL,
+		FromAddr:    cfg.EmailFrom,
+		TokenBytes:  cfg.OnboardingTokenBytes,
+		TTL:         cfg.OnboardingTokenTTL,
+	})
+
+	// Token lifecycle: refresh under a Redis lock, revoke, and detect revocation.
+	tokenMgr := tokens.NewManager(credStore, zohoClient, tokens.NewRedisLocker(redisClient), auditLog, onboardingSvc)
+	revoker := tokens.NewRevoker(credStore, zohoClient, empRepo, auditLog)
+	_ = tokenMgr // used by sync jobs (Phase 6/8)
 
 	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{
 		Onboarding:   onbRepo,
@@ -131,6 +173,7 @@ func serve(cfg *config.Config) {
 		fmt.Fprintln(w, "ready")
 	})
 	oauthHandler.Register(mux)
+	httpx.NewAPIHandler(revoker).Register(mux)
 
 	log.Printf("server listening on %s (env=%s)", cfg.HTTPAddr, cfg.AppEnv)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, mux))

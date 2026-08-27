@@ -129,7 +129,7 @@ func (c *Client) postToken(ctx context.Context, form url.Values) (*TokenResponse
 		return nil, fmt.Errorf("zoho token: decode: %w (body: %s)", err, string(body))
 	}
 	if tr.Error != "" {
-		return nil, fmt.Errorf("zoho token error: %s", tr.Error)
+		return nil, wrapTokenError(tr.Error)
 	}
 	if tr.AccessToken == "" {
 		return nil, fmt.Errorf("zoho token: empty access_token (body: %s)", string(body))
