@@ -17,15 +17,18 @@ type Revoker interface {
 // APIHandler serves authenticated admin/employee API routes.
 type APIHandler struct {
 	revoker Revoker
+	rl      Middleware
 }
 
-func NewAPIHandler(revoker Revoker) *APIHandler { return &APIHandler{revoker: revoker} }
+func NewAPIHandler(revoker Revoker, rl Middleware) *APIHandler {
+	return &APIHandler{revoker: revoker, rl: rl}
+}
 
 // Register wires API routes. These require an authenticated org on the request
 // context (set by admin auth middleware, Phase 10); without it they 401 so the
 // endpoints are never exposed unscoped (spec §17, §41).
 func (h *APIHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/employees/{id}/revoke", h.revoke)
+	mux.HandleFunc("POST /api/employees/{id}/revoke", chain(h.rl)(h.revoke))
 }
 
 func (h *APIHandler) revoke(w http.ResponseWriter, r *http.Request) {

@@ -61,7 +61,7 @@ func TestRevokeEndpoint(t *testing.T) {
 
 	revoker := tokens.NewRevoker(store, client, directory.NewRepo(pool), audit.New(audit.NewPostgresSink(pool)))
 	mux := http.NewServeMux()
-	NewAPIHandler(revoker).Register(mux)
+	NewAPIHandler(revoker, nil).Register(mux)
 
 	// Without org context → 401.
 	rec := httptest.NewRecorder()

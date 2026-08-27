@@ -46,6 +46,11 @@ type Config struct {
 
 	SessionKey string
 	SessionTTL time.Duration
+
+	RateLimitOAuth   int
+	RateLimitConnect int
+	RateLimitAPI     int
+	RateLimitWindow  time.Duration
 }
 
 type ZohoConfig struct {
@@ -101,6 +106,11 @@ func Load() (*Config, error) {
 
 		SessionKey: env("SESSION_KEY", ""),
 		SessionTTL: dur("SESSION_TTL", 30*time.Minute),
+
+		RateLimitOAuth:   intEnv("RATE_LIMIT_OAUTH", 10),
+		RateLimitConnect: intEnv("RATE_LIMIT_CONNECT", 20),
+		RateLimitAPI:     intEnv("RATE_LIMIT_API", 60),
+		RateLimitWindow:  dur("RATE_LIMIT_WINDOW", 10*time.Minute),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).

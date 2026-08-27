@@ -38,6 +38,14 @@ type OAuthDeps struct {
 	SupportAddr  string
 	PrivacyURL   string
 	TermsURL     string
+	Security     SecurityRecorder
+	ConnectRL    Middleware
+	OAuthRL      Middleware
+}
+
+// SecurityRecorder records security events for threshold alerting (spec §36).
+type SecurityRecorder interface {
+	RecordEvent(ctx context.Context, event, key string)
 }
 
 // OAuthHandler serves the consent page and the Zoho OAuth start/callback.
@@ -47,9 +55,11 @@ func NewOAuthHandler(d OAuthDeps) *OAuthHandler { return &OAuthHandler{d: d} }
 
 // Register wires the routes onto mux (spec §8).
 func (h *OAuthHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /connect/{token}", h.connect)
-	mux.HandleFunc("GET /oauth/zoho/start", h.start)
-	mux.HandleFunc("GET /oauth/zoho/callback", h.callback)
+	connect := chain(h.d.ConnectRL)
+	oauthMW := chain(h.d.OAuthRL)
+	mux.HandleFunc("GET /connect/{token}", connect(h.connect))
+	mux.HandleFunc("GET /oauth/zoho/start", oauthMW(h.start))
+	mux.HandleFunc("GET /oauth/zoho/callback", oauthMW(h.callback))
 }
 
 // connect renders the consent page for a valid onboarding token WITHOUT
@@ -85,6 +95,7 @@ func (h *OAuthHandler) start(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("t")
 	res, err := h.d.Onboarding.Consume(r.Context(), token)
 	if err != nil {
+		h.security("suspicious_onboarding", clientIP(r))
 		h.renderError(w, http.StatusBadRequest, "This link is invalid, expired, or already used.")
 		return
 	}
@@ -141,6 +152,7 @@ func (h *OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 	tok, err := h.d.Client.ExchangeCode(r.Context(), code)
 	if err != nil {
 		h.fail(r.Context(), org, empID, "token exchange failed")
+		h.security("failed_oauth", clientIP(r))
 		h.renderError(w, http.StatusBadGateway, "Zoho authorization could not be completed. Please try again.")
 		return
 	}
@@ -148,6 +160,7 @@ func (h *OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 	id, err := oauth.FetchIdentity(r.Context(), h.d.AccountsBase, tok.AccessToken)
 	if err != nil {
 		h.fail(r.Context(), org, empID, "identity fetch failed")
+		h.security("failed_oauth", clientIP(r))
 		h.renderError(w, http.StatusBadGateway, "Could not verify your Zoho identity. Please try again.")
 		return
 	}
@@ -156,6 +169,8 @@ func (h *OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 	// the expected employee. Never trust the browser-supplied email.
 	if err := oauth.VerifyBinding(id, emp.ZohoUserID, emp.Email); err != nil {
 		h.fail(r.Context(), org, empID, "identity mismatch")
+		h.security("identity_mismatch", clientIP(r))
+		h.security("failed_oauth", clientIP(r))
 		h.renderError(w, http.StatusForbidden,
 			"The Zoho account you signed in with does not match your company record. An administrator has been notified.")
 		return
@@ -200,6 +215,12 @@ func (h *OAuthHandler) fail(ctx context.Context, org db.OrgID, empID int64, reas
 		log.Printf("oauth fail: set status: %v", err)
 	}
 	h.audit(ctx, org, empID, audit.OAuthFailed, map[string]any{"reason": reason})
+}
+
+func (h *OAuthHandler) security(event, key string) {
+	if h.d.Security != nil {
+		h.d.Security.RecordEvent(context.Background(), event, key)
+	}
 }
 
 func (h *OAuthHandler) audit(ctx context.Context, org db.OrgID, empID int64, action audit.Action, md map[string]any) {

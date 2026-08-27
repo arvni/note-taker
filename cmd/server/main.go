@@ -27,6 +27,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/onboarding"
 	"github.com/arvinizadi/fathom/internal/rbac"
 	"github.com/arvinizadi/fathom/internal/redisx"
+	"github.com/arvinizadi/fathom/internal/security"
 	"github.com/arvinizadi/fathom/internal/tokens"
 	"github.com/arvinizadi/fathom/web"
 )
@@ -117,6 +118,12 @@ func serve(cfg *config.Config) {
 	}
 	defer redisClient.Close()
 
+	// Rate limiters (spec §37) and security monitor (spec §36).
+	connectRL := httpx.NewRateLimit(redisClient, "connect", cfg.RateLimitConnect, cfg.RateLimitWindow)
+	oauthRL := httpx.NewRateLimit(redisClient, "oauth", cfg.RateLimitOAuth, cfg.RateLimitWindow)
+	apiRL := httpx.NewRateLimit(redisClient, "api", cfg.RateLimitAPI, cfg.RateLimitWindow)
+	monitor := security.NewMonitor(redisClient, security.LogAlerter{}, nil)
+
 	auditLog := audit.New(audit.NewPostgresSink(pool))
 	empRepo := directory.NewRepo(pool)
 	onbRepo := onboarding.NewRepo(pool)
@@ -170,6 +177,9 @@ func serve(cfg *config.Config) {
 		SupportAddr:  cfg.SupportAddr,
 		PrivacyURL:   cfg.PrivacyURL,
 		TermsURL:     cfg.TermsURL,
+		Security:     monitor,
+		ConnectRL:    connectRL.Wrap,
+		OAuthRL:      oauthRL.Wrap,
 	})
 
 	mux := http.NewServeMux()
@@ -186,7 +196,7 @@ func serve(cfg *config.Config) {
 		fmt.Fprintln(w, "ready")
 	})
 	oauthHandler.Register(mux)
-	httpx.NewAPIHandler(revoker).Register(mux)
+	httpx.NewAPIHandler(revoker, apiRL.Wrap).Register(mux)
 	httpx.NewFathomHandler(calRepo, auditLog).Register(mux)
 
 	// Sessions, auth middleware, dashboards, and the OIDC login seam (spec §38-41,
