@@ -161,3 +161,17 @@ func (r *Repo) SetZohoUserID(ctx context.Context, org db.OrgID, id int64, zohoUs
 		WHERE organization_id = $2 AND id = $3`, zohoUserID, org, id)
 	return err
 }
+
+// RecordingSettings returns the recording preference inputs for an employee: the
+// employee's own preference plus the org default and whether org policy overrides
+// the employee (spec §31).
+func (r *Repo) RecordingSettings(ctx context.Context, org db.OrgID, employeeID int64) (empEnabled, orgDefault, orgOverrides bool, err error) {
+	t := r.pool.Tenant(org)
+	err = t.QueryRow(ctx, `
+		SELECT e.recording_enabled, o.recording_default, o.recording_policy_overrides_employee
+		FROM employees e
+		JOIN organizations o ON o.id = e.organization_id
+		WHERE e.organization_id = $1 AND e.id = $2`, org, employeeID).
+		Scan(&empEnabled, &orgDefault, &orgOverrides)
+	return
+}

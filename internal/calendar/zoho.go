@@ -40,6 +40,7 @@ type Event struct {
 	Start       string
 	End         string
 	UpdatedAt   string // maps to Zoho lastmodifiedtime (spec §32 source_updated)
+	IsPrivate   bool
 }
 
 // ListCalendars retrieves calendars for the authenticated user (spec §27).
@@ -89,6 +90,7 @@ func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID str
 			Start:       str(m["start"]),
 			End:         str(m["end"]),
 			UpdatedAt:   str(m["lastmodifiedtime"]),
+			IsPrivate:   boolOf(m["isprivate"]),
 		})
 	}
 	return events, nil
@@ -110,6 +112,11 @@ func (c *APIClient) get(ctx context.Context, accessToken, path string) ([]byte, 
 		return nil, fmt.Errorf("zoho GET %s: status %d: %s", path, resp.StatusCode, truncate(body))
 	}
 	return body, nil
+}
+
+func boolOf(v any) bool {
+	b, _ := v.(bool)
+	return b
 }
 
 func str(v any) string {
