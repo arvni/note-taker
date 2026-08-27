@@ -175,3 +175,33 @@ func (r *Repo) RecordingSettings(ctx context.Context, org db.OrgID, employeeID i
 		Scan(&empEnabled, &orgDefault, &orgOverrides)
 	return
 }
+
+// AuthorizedEmployee identifies an employee ready for calendar sync.
+type AuthorizedEmployee struct {
+	Org        db.OrgID
+	EmployeeID int64
+}
+
+// ListAuthorized enumerates all authorized employees with an active credential
+// across every organization, for the background sync loop (spec §42).
+func (r *Repo) ListAuthorized(ctx context.Context) ([]AuthorizedEmployee, error) {
+	// tenant-scope-exempt: the background sync loop enumerates every org (spec §42).
+	rows, err := r.pool.Query(ctx, `
+		SELECT e.organization_id, e.id
+		FROM employees e
+		JOIN oauth_credentials c ON c.employee_id = e.id AND c.provider = 'zoho'
+		WHERE e.onboarding_status = 'authorized' AND e.status = 'active' AND c.status = 'active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuthorizedEmployee
+	for rows.Next() {
+		var a AuthorizedEmployee
+		if err := rows.Scan(&a.Org, &a.EmployeeID); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

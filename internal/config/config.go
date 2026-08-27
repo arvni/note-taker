@@ -36,6 +36,10 @@ type Config struct {
 	SupportAddr string
 	PrivacyURL  string
 	TermsURL    string
+
+	GoogleCalendarBase string
+	GoogleCalendarID   string
+	GoogleAccessToken  string
 }
 
 type ZohoConfig struct {
@@ -81,6 +85,10 @@ func Load() (*Config, error) {
 		SupportAddr: env("SUPPORT_ADDR", ""),
 		PrivacyURL:  env("PRIVACY_URL", ""),
 		TermsURL:    env("TERMS_URL", ""),
+
+		GoogleCalendarBase: env("GOOGLE_CALENDAR_BASE", "https://www.googleapis.com/calendar/v3"),
+		GoogleCalendarID:   env("GOOGLE_CALENDAR_ID", ""),
+		GoogleAccessToken:  env("GOOGLE_ACCESS_TOKEN", ""),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).
