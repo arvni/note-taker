@@ -43,6 +43,9 @@ type Config struct {
 
 	FathomAPIBase string
 	FathomAPIKey  string
+
+	SessionKey string
+	SessionTTL time.Duration
 }
 
 type ZohoConfig struct {
@@ -95,6 +98,9 @@ func Load() (*Config, error) {
 
 		FathomAPIBase: env("FATHOM_API_BASE", "https://api.fathom.ai/external/v1"),
 		FathomAPIKey:  env("FATHOM_API_KEY", ""),
+
+		SessionKey: env("SESSION_KEY", ""),
+		SessionTTL: dur("SESSION_TTL", 30*time.Minute),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).

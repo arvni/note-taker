@@ -107,3 +107,26 @@ func (r *Repo) UpsertMapping(ctx context.Context, e MinimizedEvent) error {
 		e.MeetingProvider, e.MeetingURL, e.SourceUpdatedAt)
 	return err
 }
+
+// ListAllCalendars returns every discovered calendar for an employee with its
+// enabled flag, for the manage-calendars view (spec §47).
+func (r *Repo) ListAllCalendars(ctx context.Context, employeeID int64) ([]StoredCalendar, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT employee_id, calendar_uid, coalesce(name,''), coalesce(calendar_type,''),
+		       coalesce(timezone,''), coalesce(owner,''), enabled, is_personal
+		FROM calendars WHERE employee_id = $1 ORDER BY name`, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoredCalendar
+	for rows.Next() {
+		var c StoredCalendar
+		if err := rows.Scan(&c.EmployeeID, &c.UID, &c.Name, &c.Type, &c.Timezone,
+			&c.Owner, &c.Enabled, &c.IsPersonal); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

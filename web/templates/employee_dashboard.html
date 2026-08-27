@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Your calendar integration</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;max-width:640px;margin:0 auto;padding:24px">
+  <h2>Zoho Calendar</h2>
+  <p><strong>Status:</strong> {{.Status}}</p>
+
+  <h3>Calendars</h3>
+  <form method="POST" action="/me/calendars">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    {{range .Calendars}}
+      <div>
+        <label>
+          <input type="checkbox" name="enabled" value="{{.UID}}" {{if .Enabled}}checked{{end}}>
+          {{.Name}} {{if .IsPersonal}}<small>(personal)</small>{{end}}
+        </label>
+      </div>
+    {{else}}
+      <p>No calendars discovered yet.</p>
+    {{end}}
+    <p><button type="submit">Save calendar selection</button></p>
+  </form>
+
+  <h3>Actions</h3>
+  <form method="POST" action="/me/disconnect" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button type="submit">Disconnect</button>
+  </form>
+</body>
+</html>

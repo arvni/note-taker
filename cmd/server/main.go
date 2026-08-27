@@ -25,6 +25,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/httpx"
 	"github.com/arvinizadi/fathom/internal/oauth"
 	"github.com/arvinizadi/fathom/internal/onboarding"
+	"github.com/arvinizadi/fathom/internal/rbac"
 	"github.com/arvinizadi/fathom/internal/redisx"
 	"github.com/arvinizadi/fathom/internal/tokens"
 	"github.com/arvinizadi/fathom/web"
@@ -187,6 +188,20 @@ func serve(cfg *config.Config) {
 	oauthHandler.Register(mux)
 	httpx.NewAPIHandler(revoker).Register(mux)
 	httpx.NewFathomHandler(calRepo, auditLog).Register(mux)
+
+	// Sessions, auth middleware, dashboards, and the OIDC login seam (spec §38-41,
+	// §46-47). Admin SSO is wired via a company-specific IdentityProvider.
+	sessionKey := []byte(cfg.SessionKey)
+	if len(sessionKey) < 32 {
+		log.Fatal("server: SESSION_KEY must be set (>=32 bytes) for session signing")
+	}
+	sessions := rbac.NewSessionManager(sessionKey, cfg.SessionTTL, cfg.IsProduction())
+	auth := httpx.NewAuthMiddleware(sessions)
+	httpx.NewDashboardHandler(httpx.DashboardDeps{
+		Employees: empRepo, Calendars: calRepo, Revoker: revoker, Auth: auth,
+		Templates: tmpl, CompanyName: cfg.CompanyName,
+	}).Register(mux)
+	httpx.NewLoginHandler(nil, sessions).Register(mux) // IdP wired per company (spec §39)
 
 	log.Printf("server listening on %s (env=%s)", cfg.HTTPAddr, cfg.AppEnv)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, mux))
