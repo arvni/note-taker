@@ -1,24 +1,24 @@
-// Command dirprobe is a one-shot experiment to discover a working Zoho org-users
-// endpoint for this account (spec §3/§55). It authorizes with the directory
-// scope, then GETs a list of candidate endpoints and dumps status + raw body so
-// we can identify which (if any) returns the org directory. Not part of the app.
+// Command dirprobe validates the Zoho Directory API using the documented Self
+// Client flow (spec §3): exchange an admin-generated grant token, discover the
+// real org_id via GET /orgs, then list users with emails. No browser consent.
 //
-// Prereq: add the DIRPROBE_SCOPE (default ZohoOne.Users.READ) to the Zoho app in
-// the API Console, and authorize as a super-admin.
+// Env: ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET (Self Client), ZOHO_ACCOUNTS_BASE,
+// DIRPROBE_GRANT (the temporary grant token from the Developer Console).
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/arvinizadi/fathom/internal/config"
-	"github.com/arvinizadi/fathom/internal/oauth"
 )
 
 func main() {
@@ -26,82 +26,86 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	scope := os.Getenv("DIRPROBE_SCOPE")
-	if scope == "" {
-		scope = "ZohoOne.Users.READ"
+	grant := os.Getenv("DIRPROBE_GRANT")
+	if grant == "" {
+		log.Fatal("set DIRPROBE_GRANT to the Self Client grant token (scopes: ZohoDirectory.Orgs.READ,ZohoDirectory.Users.READ)")
 	}
-	// Request directory scope in addition to the existing ones (skip with
-	// DIRPROBE_SCOPE=none for a zero-console-change existence probe).
-	scopes := append([]string{}, cfg.Zoho.Scopes...)
-	if scope != "none" && scope != "-" {
-		scopes = append(scopes, scope)
-	}
-	client := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret, cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, scopes)
-
-	state, _, _ := oauth.GenerateState()
-	fmt.Println("Authorize (as a super-admin) with directory scope:\n\n  " + client.AuthorizeURL(state) + "\n")
-	code := waitForCallback(state)
+	hc := &http.Client{Timeout: 20 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	tok, err := client.ExchangeCode(ctx, code)
-	if err != nil {
-		log.Fatalf("token exchange (did you add %q to the app?): %v", scope, err)
-	}
-	fmt.Printf("✓ token acquired; granted scope: %s\n\n", tokenScope(tok))
 
-	// api_domain is account-specific (e.g. https://www.zohoapis.com).
+	// 1) Exchange the grant token (Self Client: no redirect_uri).
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("client_id", cfg.Zoho.ClientID)
+	form.Set("client_secret", cfg.Zoho.ClientSecret)
+	form.Set("code", grant)
+	tokBody := post(ctx, hc, cfg.Zoho.AccountsBase+"/oauth/v2/token", form)
+	var tok struct {
+		AccessToken string `json:"access_token"`
+		APIDomain   string `json:"api_domain"`
+		Error       string `json:"error"`
+	}
+	json.Unmarshal(tokBody, &tok)
+	if tok.AccessToken == "" {
+		log.Fatalf("grant exchange failed: %s", string(tokBody))
+	}
 	api := tok.APIDomain
 	if api == "" {
 		api = "https://www.zohoapis.com"
 	}
-	_ = os.Getenv("DIRPROBE_ORG")
-	candidates := []string{
-		api + "/directory/api/v2/orgs/60037266178/users?filter=all&limit=50",
-		api + "/directory/api/v2/orgs/60037266178/users?filter=all&limit=5&start=0",
+	fmt.Println("✓ grant exchanged for access token")
+
+	// 2) GET /orgs -> real org_id.
+	orgsBody := get(ctx, hc, api+"/directory/api/v2/orgs", tok.AccessToken)
+	fmt.Printf("\n── GET /orgs ──\n%s\n", string(orgsBody))
+	var orgs struct {
+		Orgs []struct {
+			OrgID       string `json:"org_id"`
+			DisplayName string `json:"display_name"`
+		} `json:"orgs"`
 	}
-	hc := &http.Client{Timeout: 15 * time.Second}
-	for _, url := range candidates {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		req.Header.Set("Authorization", "Zoho-oauthtoken "+tok.AccessToken)
-		resp, err := hc.Do(req)
-		if err != nil {
-			fmt.Printf("  %-55s ERROR %v\n", url, err)
-			continue
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4000))
-		resp.Body.Close()
-		fmt.Printf("  %-55s -> %d\n     %s\n", url, resp.StatusCode, strings.TrimSpace(string(body)))
+	json.Unmarshal(orgsBody, &orgs)
+	if len(orgs.Orgs) == 0 {
+		log.Fatal("\nNo orgs returned — the token's account is not a Directory admin/owner. Grant Directory Super Admin or use an owner account.")
 	}
-	fmt.Println("\nLook for a 200 with a users array. If all fail, CSV import is the correct path (spec §3).")
+	orgID := orgs.Orgs[0].OrgID
+	fmt.Printf("\n✓ org_id = %s (%s)\n", orgID, orgs.Orgs[0].DisplayName)
+
+	// 3) GET /orgs/{org_id}/users?include=emails
+	usersURL := api + "/directory/api/v2/orgs/" + orgID + "/users?page=1&per_page=500&include=emails"
+	usersBody := get(ctx, hc, usersURL, tok.AccessToken)
+	fmt.Printf("\n── GET /orgs/%s/users ──\n%s\n", orgID, head(usersBody, 3000))
+	fmt.Printf("\nUsers URL for config:\n  %s\n", usersURL)
 }
 
-func tokenScope(t *oauth.TokenResponse) string { return "(granted; see consent)" }
+func post(ctx context.Context, hc *http.Client, u string, form url.Values) []byte {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := hc.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return b
+}
 
-func waitForCallback(expectedState string) string {
-	codeCh := make(chan string, 1)
-	srv := &http.Server{Addr: ":8080"}
-	http.HandleFunc("/oauth/zoho/callback", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("state") != expectedState {
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			return
-		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			http.Error(w, "missing code: "+r.URL.Query().Get("error"), http.StatusBadRequest)
-			return
-		}
-		fmt.Fprintln(w, "Authorized. Return to the terminal.")
-		codeCh <- code
-	})
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("callback server: %v", err)
-		}
-	}()
-	fmt.Println("Waiting for callback on http://localhost:8080/oauth/zoho/callback ...")
-	code := <-codeCh
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
-	return code
+func get(ctx context.Context, hc *http.Client, u, token string) []byte {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("Authorization", "Zoho-oauthtoken "+token)
+	resp, err := hc.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return b
+}
+
+func head(b []byte, n int) string {
+	if len(b) > n {
+		return string(b[:n]) + "…"
+	}
+	return string(b)
 }

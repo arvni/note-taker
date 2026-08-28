@@ -101,3 +101,18 @@ The AutoSync driver is ready; once the 500 is resolved, set:
   ZOHO_DIRECTORY_USERS_URL=https://www.zohoapis.com/directory/api/v2/orgs/60037266178/users?filter=all&limit=50
   ZOHO_SCOPES=...,ZohoDirectory.users.READ   (for the org-level refresh token)
 Until then, CSV import is the working employee source (spec §3).
+
+
+### Directory: Self Client flow (2026-08-28, final)
+
+Ran the documented Self Client flow (cmd/dirprobe): admin-generated grant token
+exchanged successfully for an access token, then GET /directory/api/v2/orgs
+returned 404 (no orgs). This is the authoritative result: the token's account
+administers zero Zoho Directory orgs. API/scope/flow are all correct — the
+blocker is Zoho-side org configuration: either biongenetic.com is a Zoho Mail org
+not enrolled in Zoho Directory, or the account is not a Directory admin/owner.
+No request shape can change a "no orgs" 404. Resolution is a Zoho admin task
+(enroll the org in Zoho Directory and/or grant Directory admin), not code.
+
+Decision: CSV import is the employee source for this deployment. The AutoSync
+driver + ZohoClient remain ready for any org whose GET /orgs returns an org_id.
