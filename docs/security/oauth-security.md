@@ -37,3 +37,25 @@ real need is established (§53).
 
 - §54 org-level vs per-user authorization — resolve during the POC against a real
   test account.
+
+## POC results (2026-08-28, real Zoho account)
+
+Ran `make poc` against a live Zoho account (DC: .com). All 8 steps passed:
+
+- Token exchange: `expires_in` 3600s; refresh token returned; scopes exactly the
+  three requested — **no Mail scope**; `api_domain: https://www.zohoapis.com`.
+- Identity: ZUID is numeric (confirms `json.Number` decoding and §26 binding).
+- Calendars: fields corrected against the live response — `type` is numeric, so
+  the string type is `caltype`; `owner` is the ZUID as a string. Empty event
+  ranges return a `{"message":"No events found."}` sentinel, filtered by uid.
+- Refresh: returns a new access token with **no** new refresh token (§15).
+- Revoke: `/oauth/v2/token/revoke` returns `{"status":"success"}`.
+
+### §54 conclusion (preliminary)
+
+The authenticated user saw only its **own** calendar (`category: own`,
+`caltype: own`). This is consistent with Zoho's documented per-user consent
+model: each employee must authorize the application; there is no evidence of an
+org-level shortcut from a single user token. To fully rule out an org-level
+mechanism, repeat with an admin/super-admin account and the organization APIs —
+but the per-user OAuth architecture is the correct default and is confirmed here.

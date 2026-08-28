@@ -18,9 +18,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/arvinizadi/fathom/internal/calendar"
@@ -38,6 +41,13 @@ func main() {
 	}
 
 	client := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret, cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, cfg.Zoho.Scopes)
+
+	// POC_DEBUG=1 logs the raw HTTP response body of each Zoho call so we can
+	// confirm exact field names even on a partial failure.
+	if os.Getenv("POC_DEBUG") != "" {
+		dbg := &http.Client{Timeout: 20 * time.Second, Transport: &debugTransport{next: http.DefaultTransport}}
+		client.HTTP = dbg
+	}
 
 	// Step 1: OAuth. Spin up a one-shot local callback listener and print the URL.
 	state, _, err := oauth.GenerateState()
@@ -73,6 +83,9 @@ func main() {
 	// Steps 3-4: calendar READ + list (spec §27).
 	fmt.Println("── Steps 3-4: List calendars ──")
 	cal := calendar.NewAPIClient(cfg.Zoho.CalendarBase)
+	if os.Getenv("POC_DEBUG") != "" {
+		cal.HTTP = &http.Client{Timeout: 20 * time.Second, Transport: &debugTransport{next: http.DefaultTransport}}
+	}
 	cals, err := cal.ListCalendars(ctx, tok.AccessToken)
 	if err != nil {
 		log.Fatalf("list calendars failed: %v", err)
@@ -155,4 +168,31 @@ func waitForCallback(expectedState string) string {
 	_ = srv.Shutdown(ctx)
 	_ = os.Stdout.Sync()
 	return code
+}
+
+// debugTransport logs the raw response body of each request (POC_DEBUG mode).
+// It redacts Authorization request headers and does not print token values from
+// token responses beyond what the POC already summarizes.
+type debugTransport struct{ next http.RoundTripper }
+
+func (d *debugTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := d.next.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(strings.NewReader(string(body)))
+	fmt.Printf("   [debug] %s %s -> %d\n   [debug] body: %s\n", r.Method, r.URL.Path, resp.StatusCode, redactTokens(string(body)))
+	return resp, nil
+}
+
+// redactTokens masks access/refresh token VALUES in a JSON body so the debug
+// output shows field names and shape without leaking secrets.
+func redactTokens(s string) string {
+	for _, field := range []string{"access_token", "refresh_token", "id_token"} {
+		re := regexp.MustCompile(`("` + field + `"\s*:\s*")[^"]*(")`)
+		s = re.ReplaceAllString(s, `${1}[REDACTED]${2}`)
+	}
+	return s
 }

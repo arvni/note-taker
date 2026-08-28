@@ -22,11 +22,13 @@ func NewAPIClient(base string) *APIClient {
 	return &APIClient{Base: strings.TrimRight(base, "/"), HTTP: &http.Client{Timeout: 20 * time.Second}}
 }
 
-// Calendar is a discovered calendar (spec §27).
+// Calendar is a discovered calendar (spec §27). Field names confirmed against a
+// live Zoho response: `type` is numeric, so the human-readable string type comes
+// from `caltype` (e.g. "own"); `owner` is the numeric ZUID as a string.
 type Calendar struct {
 	UID      string `json:"uid"`
 	Name     string `json:"name"`
-	Type     string `json:"type"`
+	Type     string `json:"caltype"`
 	Timezone string `json:"timezone"`
 	Owner    string `json:"owner"`
 }
@@ -82,6 +84,11 @@ func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID str
 	}
 	events := make([]Event, 0, len(out.Events))
 	for _, m := range out.Events {
+		// Zoho returns a sentinel {"message":"No events found."} for an empty
+		// range rather than an empty array; skip anything without a uid.
+		if str(m["uid"]) == "" {
+			continue
+		}
 		events = append(events, Event{
 			UID:         str(m["uid"]),
 			Title:       str(m["title"]),
