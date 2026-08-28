@@ -11,12 +11,6 @@ import (
 	"github.com/arvinizadi/fathom/internal/tokens"
 )
 
-// FathomWebhookCreator creates a Fathom webhook subscription (implemented by
-// *fathom.Client).
-type FathomWebhookCreator interface {
-	CreateWebhook(ctx context.Context, spec fathom.WebhookSpec) (string, error)
-}
-
 // FathomWebhookStore persists the registered webhook (implemented by
 // *tokens.FathomWebhookStore).
 type FathomWebhookStore interface {
@@ -25,17 +19,18 @@ type FathomWebhookStore interface {
 }
 
 // FathomAdminHandler lets an admin register the Fathom webhook so recordings are
-// linked back to meetings (spec §43). Requires ManageCalendars.
+// linked back to meetings (spec §43). The API key is resolved per org (stored
+// settings, env fallback). Requires ManageCalendars.
 type FathomAdminHandler struct {
-	client     FathomWebhookCreator
+	apiBase    string
+	keyFor     func(ctx context.Context, org db.OrgID) string
 	store      FathomWebhookStore
 	auth       *AuthMiddleware
 	publicBase string
-	apiKeySet  bool
 }
 
-func NewFathomAdminHandler(client FathomWebhookCreator, store FathomWebhookStore, auth *AuthMiddleware, publicBase string, apiKeySet bool) *FathomAdminHandler {
-	return &FathomAdminHandler{client: client, store: store, auth: auth, publicBase: publicBase, apiKeySet: apiKeySet}
+func NewFathomAdminHandler(apiBase string, keyFor func(ctx context.Context, org db.OrgID) string, store FathomWebhookStore, auth *AuthMiddleware, publicBase string) *FathomAdminHandler {
+	return &FathomAdminHandler{apiBase: apiBase, keyFor: keyFor, store: store, auth: auth, publicBase: publicBase}
 }
 
 func (h *FathomAdminHandler) Register(mux *http.ServeMux) {
@@ -54,17 +49,21 @@ func (h *FathomAdminHandler) status(w http.ResponseWriter, r *http.Request) {
 		destURL = wh.DestinationURL
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"api_key_configured": h.apiKeySet, "registered": registered, "destination_url": destURL,
+		"api_key_configured": h.keyFor(r.Context(), db.OrgID(p.OrgID)) != "",
+		"registered":         registered, "destination_url": destURL,
 	})
 }
 
 func (h *FathomAdminHandler) register(w http.ResponseWriter, r *http.Request) {
 	p, _ := PrincipalFrom(r)
-	if !h.apiKeySet || h.client == nil {
-		writeErr(w, http.StatusServiceUnavailable, "set FATHOM_API_KEY first")
+	org := db.OrgID(p.OrgID)
+	key := h.keyFor(r.Context(), org)
+	if key == "" {
+		writeErr(w, http.StatusServiceUnavailable, "set a Fathom API key in Settings first")
 		return
 	}
-	id, err := h.client.CreateWebhook(r.Context(), fathom.WebhookSpec{
+	client := fathom.NewClient(h.apiBase, key)
+	id, err := client.CreateWebhook(r.Context(), fathom.WebhookSpec{
 		DestinationURL: h.destURL(), IncludeTranscript: true, IncludeSummary: true, IncludeActionItems: true,
 	})
 	if err != nil {
@@ -72,7 +71,7 @@ func (h *FathomAdminHandler) register(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "could not register the webhook with Fathom")
 		return
 	}
-	if err := h.store.Save(r.Context(), db.OrgID(p.OrgID), id, h.destURL()); err != nil {
+	if err := h.store.Save(r.Context(), org, id, h.destURL()); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not save webhook")
 		return
 	}

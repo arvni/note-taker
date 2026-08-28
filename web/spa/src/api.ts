@@ -26,6 +26,11 @@ export interface ZohoSettings {
   accounts_base: string; calendar_base: string; scopes: string;
   directory_users_url?: string; redirect_uri: string;
 }
+export interface AppSettings {
+  smtp_host: string; smtp_port: string; smtp_user: string; has_smtp_pass: boolean; email_from: string;
+  company_name: string; app_name: string; support_addr: string; privacy_url: string; terms_url: string;
+  has_fathom_key: boolean;
+}
 export interface ImportResult {
   parsed: number; created: number; updated: number; disabled: number;
   reactivated: number; conflicts: string[]; row_errors: string[];
@@ -60,6 +65,10 @@ export const api = {
   destStatus(): Promise<{ connected: boolean; calendar_id: string; connected_email: string; connect_url: string }> { return req("/api/v1/destination/status"); },
   destEvents(): Promise<{ connected: boolean; calendar_id: string; events: DestEvent[] }> { return req("/api/v1/destination/events"); },
   zohoSettings(): Promise<ZohoSettings> { return req("/api/v1/settings/zoho"); },
+  appSettings(): Promise<AppSettings> { return req("/api/v1/settings/app"); },
+  saveAppSettings(body: Record<string, string>): Promise<{ ok: boolean }> {
+    return req("/api/v1/settings/app", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  },
   saveZohoSettings(body: Partial<ZohoSettings> & { client_secret?: string }): Promise<{ ok: boolean }> {
     return req("/api/v1/settings/zoho", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   },

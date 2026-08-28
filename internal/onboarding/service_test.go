@@ -47,16 +47,13 @@ func TestInvite_HashOnlyStorageAndSafeLink(t *testing.T) {
 	emps := &fakeEmps{}
 	snd := &captureSender{}
 
-	svc := NewService(ts, emps, snd, nil, tmpl, Config{
-		BaseURL:     "https://calendar-sync.company.com",
-		CompanyName: "Acme",
-		AppName:     "Calendar Bridge",
-		Permissions: []string{"Read calendars", "Read events"},
-		SupportAddr: "support@company.com",
-		FromAddr:    "calendar-integration@company.com",
-		TokenBytes:  48,
-		TTL:         7 * 24 * time.Hour,
-	})
+	resolve := func(context.Context, db.OrgID) (email.Sender, Brand) {
+		return snd, Brand{CompanyName: "Acme", AppName: "Calendar Bridge",
+			SupportAddr: "support@company.com", FromAddr: "calendar-integration@company.com",
+			Permissions: []string{"Read calendars", "Read events"}}
+	}
+	svc := NewService(ts, emps, resolve, nil, tmpl,
+		"https://calendar-sync.company.com", 48, 7*24*time.Hour)
 
 	if err := svc.Invite(context.Background(), db.OrgID(1), 42); err != nil {
 		t.Fatal(err)

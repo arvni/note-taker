@@ -29,47 +29,39 @@ type TokenStore interface {
 type Service struct {
 	tokens   TokenStore
 	emps     EmployeeStore
-	sender   email.Sender
+	resolve  Resolver
 	audit    *audit.Logger
 	inviteTM *template.Template
 
-	baseURL     string
-	companyName string
-	appName     string
-	permissions []string
-	supportAddr string
-	privacyURL  string
-	fromAddr    string
-	tokenBytes  int
-	ttl         time.Duration
+	baseURL    string
+	tokenBytes int
+	ttl        time.Duration
 }
 
-// Config configures the onboarding Service.
-type Config struct {
-	BaseURL     string // e.g. https://calendar-sync.company.com (verified TLS, spec §23)
+// Brand is the per-org email/consent branding (spec §21-23).
+type Brand struct {
 	CompanyName string
 	AppName     string
-	Permissions []string // human-readable, mirrors requested scopes (spec §22)
 	SupportAddr string
 	PrivacyURL  string
-	FromAddr    string // dedicated sender (spec §21)
-	TokenBytes  int
-	TTL         time.Duration
+	FromAddr    string
+	Permissions []string
 }
 
-func NewService(tokens TokenStore, emps EmployeeStore, sender email.Sender, auditLog *audit.Logger, inviteTemplate *template.Template, cfg Config) *Service {
-	if cfg.TokenBytes < MinTokenBytes {
-		cfg.TokenBytes = 48
+// Resolver returns the email sender and branding for an org, so email/branding
+// can be configured per-org in the app (with env fallback).
+type Resolver func(ctx context.Context, org db.OrgID) (email.Sender, Brand)
+
+func NewService(tokens TokenStore, emps EmployeeStore, resolve Resolver, auditLog *audit.Logger, inviteTemplate *template.Template, baseURL string, tokenBytes int, ttl time.Duration) *Service {
+	if tokenBytes < MinTokenBytes {
+		tokenBytes = 48
 	}
-	if cfg.TTL <= 0 {
-		cfg.TTL = 7 * 24 * time.Hour
+	if ttl <= 0 {
+		ttl = 7 * 24 * time.Hour
 	}
 	return &Service{
-		tokens: tokens, emps: emps, sender: sender, audit: auditLog, inviteTM: inviteTemplate,
-		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
-		companyName: cfg.CompanyName, appName: cfg.AppName, permissions: cfg.Permissions,
-		supportAddr: cfg.SupportAddr, privacyURL: cfg.PrivacyURL, fromAddr: cfg.FromAddr,
-		tokenBytes: cfg.TokenBytes, ttl: cfg.TTL,
+		tokens: tokens, emps: emps, resolve: resolve, audit: auditLog, inviteTM: inviteTemplate,
+		baseURL: strings.TrimRight(baseURL, "/"), tokenBytes: tokenBytes, ttl: ttl,
 	}
 }
 
@@ -89,21 +81,22 @@ func (s *Service) Invite(ctx context.Context, org db.OrgID, employeeID int64) er
 		return err
 	}
 
+	sender, brand := s.resolve(ctx, org)
 	consentURL := s.baseURL + "/connect/" + raw // raw token in path, never a secret in query (spec §22)
-	msg, err := email.RenderInvite(s.inviteTM, s.fromAddr, email.InviteData{
-		CompanyName:    s.companyName,
-		AppName:        s.appName,
+	msg, err := email.RenderInvite(s.inviteTM, brand.FromAddr, email.InviteData{
+		CompanyName:    brand.CompanyName,
+		AppName:        brand.AppName,
 		EmployeeEmail:  empEmail,
-		Permissions:    s.permissions,
+		Permissions:    brand.Permissions,
 		ConsentURL:     consentURL,
 		ExpiresAt:      expiresAt.Format("2006-01-02 15:04 MST"),
-		SupportContact: s.supportAddr,
-		PrivacyURL:     s.privacyURL,
+		SupportContact: brand.SupportAddr,
+		PrivacyURL:     brand.PrivacyURL,
 	})
 	if err != nil {
 		return err
 	}
-	if err := s.sender.Send(ctx, msg); err != nil {
+	if err := sender.Send(ctx, msg); err != nil {
 		return fmt.Errorf("onboarding: send invite: %w", err)
 	}
 

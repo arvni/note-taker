@@ -22,8 +22,6 @@ import (
 	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
-	"github.com/arvinizadi/fathom/internal/email"
-	"github.com/arvinizadi/fathom/internal/fathom"
 	"github.com/arvinizadi/fathom/internal/google"
 	"github.com/arvinizadi/fathom/internal/httpx"
 	"github.com/arvinizadi/fathom/internal/oauth"
@@ -33,6 +31,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/redisx"
 	"github.com/arvinizadi/fathom/internal/security"
 	"github.com/arvinizadi/fathom/internal/tokens"
+	"github.com/arvinizadi/fathom/internal/wire"
 	"github.com/arvinizadi/fathom/web"
 )
 
@@ -173,26 +172,15 @@ func serve(cfg *config.Config) {
 		return oc.CalendarBase, nil
 	}
 
-	// Email sender: real SMTP relay when configured, else a dev logger.
-	var sender email.Sender = email.LogSender{}
-	if cfg.SMTPHost != "" {
-		sender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailFrom)
-		log.Print("email: using SMTP relay " + cfg.SMTPHost)
-	}
+	// Per-org app settings (email, branding, Fathom) entered in the app, with env
+	// fallback. Resolves the email sender + branding per org for invitations.
+	appSettings := tokens.NewAppSettingsStore(pool, cipher)
+	onboardingResolve := wire.OnboardingResolver(appSettings, cfg)
 
 	// Onboarding service doubles as the reconnect trigger when a credential goes
 	// invalid (spec §18, §45).
-	onboardingSvc := onboarding.NewService(onbRepo, empStore{empRepo}, sender, auditLog, tmpl, onboarding.Config{
-		BaseURL:     cfg.PublicBaseURL,
-		CompanyName: cfg.CompanyName,
-		AppName:     cfg.AppName,
-		Permissions: cfg.ReadablePermissions(),
-		SupportAddr: cfg.SupportAddr,
-		PrivacyURL:  cfg.PrivacyURL,
-		FromAddr:    cfg.EmailFrom,
-		TokenBytes:  cfg.OnboardingTokenBytes,
-		TTL:         cfg.OnboardingTokenTTL,
-	})
+	onboardingSvc := onboarding.NewService(onbRepo, empStore{empRepo}, onboardingResolve, auditLog, tmpl,
+		cfg.PublicBaseURL, cfg.OnboardingTokenBytes, cfg.OnboardingTokenTTL)
 
 	// Token lifecycle: refresh under a Redis lock, revoke, and detect revocation.
 	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, onboardingSvc)
@@ -297,12 +285,11 @@ func serve(cfg *config.Config) {
 	httpx.NewDestinationHandler(resolveDest, auth).Register(mux)
 	httpx.NewGoogleConnectHandler(googleOAuth, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
 	httpx.NewAPIv1(empRepo, calRepo, reconciler, revoker, onboardingSvc, auth).Register(mux)
-	var fathomClient httpx.FathomWebhookCreator
-	if cfg.FathomAPIKey != "" {
-		fathomClient = fathom.NewClient(cfg.FathomAPIBase, cfg.FathomAPIKey)
+	fathomKeyFor := func(ctx context.Context, org db.OrgID) string {
+		return wire.FathomAPIKey(ctx, appSettings, org, cfg.FathomAPIKey)
 	}
-	httpx.NewFathomAdminHandler(fathomClient, tokens.NewFathomWebhookStore(pool), auth, cfg.PublicBaseURL, cfg.FathomAPIKey != "").Register(mux)
-	httpx.NewSettingsHandler(zohoSettings, auth, zohoRedirect).Register(mux)
+	httpx.NewFathomAdminHandler(cfg.FathomAPIBase, fathomKeyFor, tokens.NewFathomWebhookStore(pool), auth, cfg.PublicBaseURL).Register(mux)
+	httpx.NewSettingsHandler(zohoSettings, appSettings, auth, zohoRedirect).Register(mux)
 	if spaFS, err := web.SPA(); err == nil {
 		httpx.NewSPAHandler(spaFS).Register(mux)
 	} else {

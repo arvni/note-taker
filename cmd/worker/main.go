@@ -18,7 +18,6 @@ import (
 	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
-	"github.com/arvinizadi/fathom/internal/email"
 	"github.com/arvinizadi/fathom/internal/google"
 	"github.com/arvinizadi/fathom/internal/oauth"
 	"github.com/arvinizadi/fathom/internal/onboarding"
@@ -26,6 +25,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/retention"
 	"github.com/arvinizadi/fathom/internal/sync"
 	"github.com/arvinizadi/fathom/internal/tokens"
+	"github.com/arvinizadi/fathom/internal/wire"
 	"github.com/arvinizadi/fathom/web"
 )
 
@@ -153,15 +153,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("worker: templates: %v", err)
 		}
-		var sender email.Sender = email.LogSender{}
-		if cfg.SMTPHost != "" {
-			sender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailFrom)
-		}
-		onbSvc := onboarding.NewService(onboarding.NewRepo(pool), empStore{empRepo}, sender, auditLog, tmpl, onboarding.Config{
-			BaseURL: cfg.PublicBaseURL, CompanyName: cfg.CompanyName, AppName: cfg.AppName,
-			Permissions: cfg.ReadablePermissions(), SupportAddr: cfg.SupportAddr, PrivacyURL: cfg.PrivacyURL,
-			FromAddr: cfg.EmailFrom, TokenBytes: cfg.OnboardingTokenBytes, TTL: cfg.OnboardingTokenTTL,
-		})
+		resolve := wire.OnboardingResolver(tokens.NewAppSettingsStore(pool, cipher), cfg)
+		onbSvc := onboarding.NewService(onboarding.NewRepo(pool), empStore{empRepo}, resolve, auditLog, tmpl,
+			cfg.PublicBaseURL, cfg.OnboardingTokenBytes, cfg.OnboardingTokenTTL)
 		offboarder := tokens.NewOffboarder(credStore, zohoRevokerFor, empRepo, auditLog)
 		reconciler := directory.NewReconciler(empRepo, onbSvc, offboarder)
 		dirClient := directory.NewZohoClient(cfg.ZohoDirectoryUsersURL)

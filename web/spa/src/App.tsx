@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings } from "./api";
+import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings, type AppSettings } from "./api";
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   authorized: { label: "Connected", cls: "ok" },
@@ -198,7 +198,56 @@ function SettingsView() {
         {saved && <div className="banner" style={{ marginTop: 14, background: "var(--ok-bg)", color: "var(--ok)" }}>Saved. Employees can now connect their Zoho calendars.</div>}
         <div className="modal-actions"><button className="btn primary" disabled={!clientId} onClick={save}>Save Zoho settings</button></div>
       </section>
+      <AppSettingsCard />
     </main>
+  );
+}
+
+function AppSettingsCard() {
+  const [a, setA] = useState<AppSettings | null>(null);
+  const [f, setF] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { api.appSettings().then((x) => { setA(x); setF({
+    smtp_host: x.smtp_host, smtp_port: x.smtp_port, smtp_user: x.smtp_user, email_from: x.email_from,
+    company_name: x.company_name, app_name: x.app_name, support_addr: x.support_addr,
+    privacy_url: x.privacy_url, terms_url: x.terms_url,
+  }); }).catch((e) => setErr(e.message)); }, []);
+
+  const on = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+  const Field = ({ k, label, ph, type }: { k: string; label: string; ph?: string; type?: string }) =>
+    <label className="field"><span>{label}</span><input type={type || "text"} value={f[k] ?? ""} onChange={on(k)} placeholder={ph} /></label>;
+
+  async function save() {
+    setErr(""); setSaved(false);
+    try { await api.saveAppSettings(f); setF({ ...f, smtp_pass: "", fathom_api_key: "" }); setSaved(true); setA(await api.appSettings()); }
+    catch (e: any) { setErr(e.message); }
+  }
+
+  return (
+    <section className="card connect-card" style={{ textAlign: "left", maxWidth: 640, margin: "18px auto 0" }}>
+      <h3 style={{ textAlign: "center" }}>Email, branding &amp; Fathom</h3>
+
+      <h4>Email server (SMTP)</h4>
+      <p className="muted" style={{ margin: "0 0 8px" }}>Used to send onboarding invitations. Leave blank to only log emails (dev).</p>
+      <div className="field-row"><Field k="smtp_host" label="SMTP host" ph="smtp.zoho.com" /><Field k="smtp_port" label="Port" ph="587" /></div>
+      <div className="field-row"><Field k="smtp_user" label="Username" /><label className="field"><span>Password {a?.has_smtp_pass && <em className="muted">(set)</em>}</span><input type="password" value={f.smtp_pass ?? ""} onChange={on("smtp_pass")} placeholder={a?.has_smtp_pass ? "••••••••" : ""} /></label></div>
+      <Field k="email_from" label="From address" ph="calendar-integration@company.com" />
+
+      <h4>Branding</h4>
+      <div className="field-row"><Field k="company_name" label="Company name" ph="Your Company" /><Field k="app_name" label="App name" ph="Calendar Bridge" /></div>
+      <Field k="support_addr" label="Support email" ph="support@company.com" />
+      <div className="field-row"><Field k="privacy_url" label="Privacy URL" /><Field k="terms_url" label="Terms URL" /></div>
+
+      <h4>Fathom</h4>
+      <p className="muted" style={{ margin: "0 0 8px" }}>API key to register the recording webhook (Fathom Calendar tab).</p>
+      <label className="field"><span>Fathom API key {a?.has_fathom_key && <em className="muted">(set)</em>}</span><input type="password" value={f.fathom_api_key ?? ""} onChange={on("fathom_api_key")} placeholder={a?.has_fathom_key ? "••••••••" : ""} /></label>
+
+      {err && <div className="banner bad" style={{ marginTop: 14 }}>{err}</div>}
+      {saved && <div className="banner" style={{ marginTop: 14, background: "var(--ok-bg)", color: "var(--ok)" }}>Settings saved.</div>}
+      <div className="modal-actions"><button className="btn primary" onClick={save}>Save settings</button></div>
+    </section>
   );
 }
 

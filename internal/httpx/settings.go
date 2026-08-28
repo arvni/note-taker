@@ -18,21 +18,90 @@ type ZohoSettingsRepo interface {
 	Save(ctx context.Context, org db.OrgID, in tokens.ZohoSettings) error
 }
 
-// SettingsHandler lets an admin configure the org's Zoho OAuth app in the UI, so
-// one deployment serves any Zoho org (spec §8, §53). Requires ManagePolicies.
+// AppSettingsRepo persists per-org app settings (email, branding, Fathom).
+type AppSettingsRepo interface {
+	Get(ctx context.Context, org db.OrgID) (*tokens.AppSettings, error)
+	Save(ctx context.Context, org db.OrgID, in tokens.AppSettings) error
+}
+
+// SettingsHandler lets an admin configure the org's Zoho app + email/branding/
+// Fathom in the UI, so one deployment serves any org (spec §8, §21-23, §53).
+// Requires ManagePolicies.
 type SettingsHandler struct {
 	store    ZohoSettingsRepo
+	app      AppSettingsRepo
 	auth     *AuthMiddleware
 	redirect string // the callback URI to register in the Zoho console
 }
 
-func NewSettingsHandler(store ZohoSettingsRepo, auth *AuthMiddleware, redirect string) *SettingsHandler {
-	return &SettingsHandler{store: store, auth: auth, redirect: redirect}
+func NewSettingsHandler(store ZohoSettingsRepo, app AppSettingsRepo, auth *AuthMiddleware, redirect string) *SettingsHandler {
+	return &SettingsHandler{store: store, app: app, auth: auth, redirect: redirect}
 }
 
 func (h *SettingsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/settings/zoho", h.auth.RequirePerm(rbac.ManagePolicies, h.get))
 	mux.HandleFunc("PUT /api/v1/settings/zoho", h.auth.RequirePerm(rbac.ManagePolicies, h.put))
+	mux.HandleFunc("GET /api/v1/settings/app", h.auth.RequirePerm(rbac.ManagePolicies, h.getApp))
+	mux.HandleFunc("PUT /api/v1/settings/app", h.auth.RequirePerm(rbac.ManagePolicies, h.putApp))
+}
+
+func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r)
+	out := map[string]any{
+		"smtp_host": "", "smtp_port": "587", "smtp_user": "", "has_smtp_pass": false, "email_from": "",
+		"company_name": "", "app_name": "", "support_addr": "", "privacy_url": "", "terms_url": "",
+		"has_fathom_key": false,
+	}
+	if a, err := h.app.Get(r.Context(), db.OrgID(p.OrgID)); err == nil {
+		out["smtp_host"] = a.SMTPHost
+		out["smtp_port"] = a.SMTPPort
+		out["smtp_user"] = a.SMTPUser
+		out["has_smtp_pass"] = a.SMTPPass != ""
+		out["email_from"] = a.EmailFrom
+		out["company_name"] = a.CompanyName
+		out["app_name"] = a.AppName
+		out["support_addr"] = a.SupportAddr
+		out["privacy_url"] = a.PrivacyURL
+		out["terms_url"] = a.TermsURL
+		out["has_fathom_key"] = a.FathomAPIKey != ""
+	} else if !errors.Is(err, tokens.ErrNoAppSettings) {
+		writeErr(w, http.StatusInternalServerError, "could not load settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type appSettingsReq struct {
+	SMTPHost    string `json:"smtp_host"`
+	SMTPPort    string `json:"smtp_port"`
+	SMTPUser    string `json:"smtp_user"`
+	SMTPPass    string `json:"smtp_pass"`
+	EmailFrom   string `json:"email_from"`
+	CompanyName string `json:"company_name"`
+	AppName     string `json:"app_name"`
+	SupportAddr string `json:"support_addr"`
+	PrivacyURL  string `json:"privacy_url"`
+	TermsURL    string `json:"terms_url"`
+	FathomKey   string `json:"fathom_api_key"`
+}
+
+func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r)
+	var req appSettingsReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := h.app.Save(r.Context(), db.OrgID(p.OrgID), tokens.AppSettings{
+		SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUser: req.SMTPUser, SMTPPass: req.SMTPPass,
+		EmailFrom: req.EmailFrom, CompanyName: req.CompanyName, AppName: req.AppName,
+		SupportAddr: req.SupportAddr, PrivacyURL: req.PrivacyURL, TermsURL: req.TermsURL,
+		FathomAPIKey: req.FathomKey,
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *SettingsHandler) get(w http.ResponseWriter, r *http.Request) {
