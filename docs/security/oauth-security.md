@@ -69,3 +69,23 @@ offset (`20260830T110000+0400`), not `Z`. `ListEvents` reads from `dateandtime`
 detection confirmed live: a `location` of `https://meet.google.com/...` is
 detected as `google_meet`. Without this fix, start/end were nil and the sync
 engine would skip every event — nothing would reach Google Calendar.
+
+## Directory endpoint validation (2026-08-28, real org)
+
+Probed candidate Zoho org-users REST endpoints against a live account
+(cio@biongenetic.com, DC .com) with `cmd/dirprobe`. All returned 404 / error
+pages — none returned INVALID_OAUTHSCOPE (which would indicate a real endpoint
+needing a scope):
+
+- www.zohoapis.com/organization/v1/users -> 404 "API endpoint not found"
+- www.zohoapis.com/directory/v1/users -> 404
+- www.zohoapis.com/directory/api/v1/users -> 404
+- directory.zoho.com/api/v1/users -> 404
+- accounts.zoho.com/api/v1/users -> 404
+
+Conclusion: the `ZohoOne.Users.READ` scope exists but its user-listing surface is
+Deluge-only (`zoho.one.getUsers` / `zoho.directory.getUsers`), with no public REST
+endpoint reachable by the app for this org. Clean alternatives require Zoho Mail
+scopes (forbidden by §33) or are per-product user lists. Therefore **CSV import is
+the validated employee-source path for this deployment** (spec §3). The AutoSync
+driver remains available for any org whose Zoho setup does expose a users URL.
