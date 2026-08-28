@@ -54,12 +54,10 @@ func main() {
 	if api == "" {
 		api = "https://www.zohoapis.com"
 	}
+	_ = os.Getenv("DIRPROBE_ORG")
 	candidates := []string{
-		api + "/organization/v1/users",
-		api + "/directory/v1/users",
-		api + "/directory/api/v1/users",
-		"https://directory.zoho.com/api/v1/users",
-		strings.Replace(api, "zohoapis", "accounts", 1) + "/api/v1/users",
+		api + "/directory/api/v2/orgs/60037266178/users?filter=all&limit=50",
+		api + "/directory/api/v2/orgs/60037266178/users?filter=all&limit=5&start=0",
 	}
 	hc := &http.Client{Timeout: 15 * time.Second}
 	for _, url := range candidates {
@@ -70,7 +68,7 @@ func main() {
 			fmt.Printf("  %-55s ERROR %v\n", url, err)
 			continue
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 600))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4000))
 		resp.Body.Close()
 		fmt.Printf("  %-55s -> %d\n     %s\n", url, resp.StatusCode, strings.TrimSpace(string(body)))
 	}

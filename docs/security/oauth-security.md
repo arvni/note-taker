@@ -72,20 +72,32 @@ engine would skip every event — nothing would reach Google Calendar.
 
 ## Directory endpoint validation (2026-08-28, real org)
 
-Probed candidate Zoho org-users REST endpoints against a live account
-(cio@biongenetic.com, DC .com) with `cmd/dirprobe`. All returned 404 / error
-pages — none returned INVALID_OAUTHSCOPE (which would indicate a real endpoint
-needing a scope):
+Iteratively probed with `cmd/dirprobe` against a live org. Findings:
 
-- www.zohoapis.com/organization/v1/users -> 404 "API endpoint not found"
-- www.zohoapis.com/directory/v1/users -> 404
-- www.zohoapis.com/directory/api/v1/users -> 404
-- directory.zoho.com/api/v1/users -> 404
-- accounts.zoho.com/api/v1/users -> 404
+- The legitimate Zoho **Directory OAuth API v2 exists** and is the compliant path
+  (spec §3) — no scraping, no Mail scopes:
+  `GET https://www.zohoapis.com/directory/api/v2/orgs/{ZOID}/users`
+- Scope: `ZohoDirectory.users.READ` (accepted). `ZohoDirectory.orgs.READ` for org
+  endpoints.
+- ZOID confirmed = 60037266178 (org-details returned a scope error, not
+  not-found, once the right id was used).
+- Query params: the Directory admin UI uses `?filter=all&limit=50`.
 
-Conclusion: the `ZohoOne.Users.READ` scope exists but its user-listing surface is
-Deluge-only (`zoho.one.getUsers` / `zoho.directory.getUsers`), with no public REST
-endpoint reachable by the app for this org. Clean alternatives require Zoho Mail
-scopes (forbidden by §33) or are per-product user lists. Therefore **CSV import is
-the validated employee-source path for this deployment** (spec §3). The AutoSync
-driver remains available for any org whose Zoho setup does expose a users URL.
+BLOCKER: with the correct endpoint, scope, ZOID, and the exact UI params, the
+OAuth call returns HTTP 500 ("Something went wrong"), while the same request
+succeeds in the browser via admin session cookies. This is an auth-context /
+authorization issue, not a request-shape issue. Likely cause: the OAuth user is a
+Zoho **Mail** admin but not a Zoho **Directory** super-admin (the /orgs listing
+also 404'd), or a Zoho-side limitation on OAuth access to this endpoint.
+
+Resolution options (deterministic, not guesswork):
+1. Verify/grant Zoho **Directory** super-admin to the account issuing the
+   org-level token (directory.zoho.com -> Admins), then retry.
+2. Use a confirmed Directory super-admin account for ZOHO_DIRECTORY_REFRESH_TOKEN.
+3. If it persists, capture the 500's correlation id and open a Zoho support case
+   for OAuth access to /directory/api/v2/orgs/{id}/users.
+
+The AutoSync driver is ready; once the 500 is resolved, set:
+  ZOHO_DIRECTORY_USERS_URL=https://www.zohoapis.com/directory/api/v2/orgs/60037266178/users?filter=all&limit=50
+  ZOHO_SCOPES=...,ZohoDirectory.users.READ   (for the org-level refresh token)
+Until then, CSV import is the working employee source (spec §3).
