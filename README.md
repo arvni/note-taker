@@ -1,5 +1,7 @@
 # Fathom — Zoho Calendar → Fathom Bridge
 
+![CI](https://github.com/arvinizadi/fathom/actions/workflows/ci.yml/badge.svg)
+
 Secure, multi-user calendar synchronization: discovers company employees, obtains
 per-employee delegated OAuth consent to Zoho Calendar, detects qualifying meetings,
 mirrors them into a Google Calendar that Fathom records, and confirms the chain.

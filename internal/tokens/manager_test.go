@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,25 +13,40 @@ import (
 )
 
 type fakeStore struct {
+	mu       sync.Mutex
 	cred     *Credential
 	upserts  int
 	statuses []string
 }
 
 func (f *fakeStore) Get(context.Context, int64) (*Credential, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	c := *f.cred
 	return &c, nil
 }
 func (f *fakeStore) Upsert(_ context.Context, c Credential) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.upserts++
 	f.cred.AccessToken = c.AccessToken
 	f.cred.AccessExpiresAt = c.AccessExpiresAt
 	return nil
 }
 func (f *fakeStore) SetStatus(_ context.Context, _ int64, s string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.statuses = append(f.statuses, s)
 	f.cred.Status = s
 	return nil
+}
+
+// setAccess mutates the credential under the lock (for concurrent test peers).
+func (f *fakeStore) setAccess(tok string, exp time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cred.AccessToken = tok
+	f.cred.AccessExpiresAt = exp
 }
 
 type fakeRefresher struct {
@@ -136,14 +152,13 @@ func TestAccessToken_LockBusyReadsPeerResult(t *testing.T) {
 	store := &fakeStore{cred: &Credential{EmployeeID: 1, AccessToken: "peer-acc", RefreshToken: "ref",
 		Status: StatusActive, AccessExpiresAt: time.Now().Add(30 * time.Minute)}}
 	// Force the refresh path by making expiry near, but lock busy.
-	store.cred.AccessExpiresAt = time.Now().Add(1 * time.Minute)
+	store.setAccess("peer-acc", time.Now().Add(1*time.Minute))
 	ref := &fakeRefresher{}
 	m := NewManager(store, ref, busyLocker{}, nil, nil)
 	// After the short wait, simulate peer having refreshed by extending expiry.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		store.cred.AccessToken = "peer-fresh"
-		store.cred.AccessExpiresAt = time.Now().Add(30 * time.Minute)
+		store.setAccess("peer-fresh", time.Now().Add(30*time.Minute))
 	}()
 	tok, err := m.AccessToken(context.Background(), 1, 1)
 	if err != nil {
