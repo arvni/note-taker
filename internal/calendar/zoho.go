@@ -89,13 +89,24 @@ func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID str
 		if str(m["uid"]) == "" {
 			continue
 		}
+		// In the events LIST response, start/end are nested under `dateandtime`
+		// (confirmed live); fall back to top-level for the detail endpoint shape.
+		start, end := str(m["start"]), str(m["end"])
+		if dt, ok := m["dateandtime"].(map[string]any); ok {
+			if s := str(dt["start"]); s != "" {
+				start = s
+			}
+			if e := str(dt["end"]); e != "" {
+				end = e
+			}
+		}
 		events = append(events, Event{
 			UID:         str(m["uid"]),
 			Title:       str(m["title"]),
 			Location:    str(m["location"]),
 			Description: str(m["description"]),
-			Start:       str(m["start"]),
-			End:         str(m["end"]),
+			Start:       start,
+			End:         end,
 			UpdatedAt:   str(m["lastmodifiedtime"]),
 			IsPrivate:   boolOf(m["isprivate"]),
 		})

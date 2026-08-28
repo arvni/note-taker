@@ -59,3 +59,13 @@ model: each employee must authorize the application; there is no evidence of an
 org-level shortcut from a single user token. To fully rule out an org-level
 mechanism, repeat with an admin/super-admin account and the organization APIs —
 but the per-user OAuth architecture is the correct default and is confirmed here.
+
+### Events list — nested start/end (2026-08-28)
+
+The events LIST response nests start/end inside a `dateandtime` object
+(`{"timezone","start","end"}`), NOT as top-level fields. Times use a timezone
+offset (`20260830T110000+0400`), not `Z`. `ListEvents` reads from `dateandtime`
+(with top-level fallback) and `parseZohoTime` accepts the offset format. Meeting
+detection confirmed live: a `location` of `https://meet.google.com/...` is
+detected as `google_meet`. Without this fix, start/end were nil and the sync
+engine would skip every event — nothing would reach Google Calendar.

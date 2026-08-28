@@ -47,3 +47,36 @@ func TestListEvents_NoEventsSentinel(t *testing.T) {
 		t.Fatalf("sentinel should yield 0 events, got %d: %+v", len(evs), evs)
 	}
 }
+
+func TestListEvents_LiveShape(t *testing.T) {
+	// Exact event JSON from a live Zoho account: start/end nested in dateandtime.
+	body := `{"events":[{"title":"test notetaker","uid":"63nu4ucdte8r3kn33ebe74dntk@google.com","dateandtime":{"timezone":"Asia/Dubai","start":"20260830T110000+0400","end":"20260830T120000+0400"},"lastmodifiedtime":"20260828T065238Z","isprivate":false,"location":"https://meet.google.com/qyi-scvm-mai"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	evs, err := NewAPIClient(srv.URL).ListEvents(context.Background(), "tok", "cal", time.Now(), time.Now().Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	e := evs[0]
+	if e.Title != "test notetaker" || e.Location != "https://meet.google.com/qyi-scvm-mai" {
+		t.Fatalf("event basic fields wrong: %+v", e)
+	}
+	// The critical fix: start/end must be populated from dateandtime.
+	if e.Start != "20260830T110000+0400" || e.End != "20260830T120000+0400" {
+		t.Fatalf("start/end not extracted from dateandtime: start=%q end=%q", e.Start, e.End)
+	}
+	// And they must parse to a non-nil time (offset format).
+	if parseZohoTime(e.Start) == nil || parseZohoTime(e.End) == nil {
+		t.Fatalf("parseZohoTime failed on offset format: %q / %q", e.Start, e.End)
+	}
+	// Detection picks up the Meet link.
+	if d := DetectMeeting(e.Location, e.Description, ""); d.Provider != ProviderMeet {
+		t.Fatalf("meeting not detected: %+v", d)
+	}
+}
