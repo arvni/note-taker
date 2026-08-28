@@ -27,4 +27,4 @@ WORKDIR /app
 COPY --from=build /out/server /app/server
 COPY --from=build /out/worker /app/worker
 EXPOSE 8080
-ENTRYPOINT ["/app/server"]
+CMD ["/app/server"]

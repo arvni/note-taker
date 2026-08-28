@@ -1,3 +1,11 @@
+# Production stack: Caddy (auto-HTTPS) terminates TLS and reverse-proxies to the
+# `server` (which serves the API and the embedded SPA frontend). Configure via
+# .env.prod (copy .env.prod.example). Set POSTGRES_PASSWORD in the shell or a
+# .env file used by `docker compose` for interpolation.
+#
+#   docker compose -f docker-compose.prod.yml run --rm migrate   # apply schema
+#   docker compose -f docker-compose.prod.yml up -d               # start all
+
 services:
   caddy:
     image: caddy:2-alpine
@@ -12,15 +20,19 @@ services:
     depends_on:
       - server
 
+  # Backend + embedded SPA. Not published to the host; Caddy reaches it in-network.
   server:
     build: .
     restart: unless-stopped
     command: ["/app/server"]
     env_file: [.env.prod]
+    volumes:
+      # Optional Google service-account key (if GOOGLE_CREDENTIALS_FILE is set).
+      - ./secrets:/app/secrets:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    # not exposed to the host; Caddy reaches it over the compose network
+      migrate: { condition: service_completed_successfully }
     expose: ["8080"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
@@ -33,10 +45,14 @@ services:
     restart: unless-stopped
     command: ["/app/worker"]
     env_file: [.env.prod]
+    volumes:
+      - ./secrets:/app/secrets:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
 
+  # One-shot schema migration (run via `run --rm migrate`, also a start dependency).
   migrate:
     build: .
     command: ["/app/server", "migrate", "up"]

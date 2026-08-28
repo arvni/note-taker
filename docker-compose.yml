@@ -1,6 +1,17 @@
+# Local run of the whole app: the SPA (frontend) is embedded in the `server`
+# binary and served at /app/, so there is no separate frontend container.
+#
+#   docker compose up -d               # build + run everything (app on :8080)
+#   docker compose up -d postgres redis  # just the deps (for host `go run` dev)
+#
+# Requires a .env file (copy .env.example -> .env and fill CRYPTO_MASTER_KEY and
+# SESSION_KEY at minimum). The DB/Redis URLs below point at the compose services
+# and override any values in .env.
+
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: fathom
       POSTGRES_PASSWORD: fathom
@@ -17,6 +28,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -24,6 +36,59 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # One-shot: apply DB migrations, then exit.
+  migrate:
+    build: .
+    command: ["/app/server", "migrate", "up"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://fathom:fathom@postgres:5432/fathom?sslmode=disable
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  # Backend + embedded SPA frontend.
+  server:
+    build: .
+    restart: unless-stopped
+    command: ["/app/server"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://fathom:fathom@postgres:5432/fathom?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  # Background jobs: directory sync, token refresh, calendar sync, retention.
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["/app/worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://fathom:fathom@postgres:5432/fathom?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
 
 volumes:
   pgdata:
