@@ -50,7 +50,7 @@ func (z *mutableZoho) server(t *testing.T) *httptest.Server {
 
 // fakeGoogle records create/update/delete calls.
 type fakeGoogle struct {
-	mu                       sync.Mutex
+	mu                        sync.Mutex
 	creates, updates, deletes int
 	nextID                    int
 }
@@ -81,12 +81,12 @@ func (g *fakeGoogle) server(t *testing.T) *httptest.Server {
 	return s
 }
 
-func itoa(n int) string { return string(rune('0'+n)) }
+func itoa(n int) string { return string(rune('0' + n)) }
 
 func meet(uid, mod string) map[string]any {
 	return map[string]any{"uid": uid, "title": "Client call",
 		"location": "https://meet.google.com/abc-defg-hij",
-		"start": "20260901T130000Z", "end": "20260901T140000Z", "lastmodifiedtime": mod}
+		"start":    "20260901T130000Z", "end": "20260901T140000Z", "lastmodifiedtime": mod}
 }
 
 func TestSyncEngine_CreateUpdateCancel(t *testing.T) {
@@ -123,7 +123,7 @@ func TestSyncEngine_CreateUpdateCancel(t *testing.T) {
 	gsrv := g.server(t)
 
 	repo := calendar.NewRepo(pool)
-	scanner := calendar.NewService(fakeTP{}, calendar.NewAPIClient(zsrv.URL), repo, fakePP{}, nil)
+	scanner := calendar.NewService(fakeTP{}, func(context.Context, db.OrgID) (string, error) { return zsrv.URL, nil }, repo, fakePP{}, nil)
 	dest := google.NewClient(gsrv.URL, "dest", google.StaticToken("gtok"))
 	engine := NewEngine(scanner, dest, repo, nil)
 	org := db.OrgID(oid)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent } from "./api";
+import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings } from "./api";
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   authorized: { label: "Connected", cls: "ok" },
@@ -22,7 +22,7 @@ export function App() {
   const [importing, setImporting] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [toast, setToast] = useState("");
-  const [view, setView] = useState<"employees" | "calendar">("employees");
+  const [view, setView] = useState<"employees" | "calendar" | "settings">("employees");
 
   async function load() {
     try {
@@ -58,6 +58,7 @@ export function App() {
         <nav className="nav">
           <button className={"navlink" + (view === "employees" ? " on" : "")} onClick={() => setView("employees")}>Employees</button>
           <button className={"navlink" + (view === "calendar" ? " on" : "")} onClick={() => setView("calendar")}>Fathom Calendar</button>
+          <button className={"navlink" + (view === "settings" ? " on" : "")} onClick={() => setView("settings")}>Settings</button>
         </nav>
         <div className="who">{me?.email} · <span className="role">{me?.role}</span>
           <form method="POST" action="/logout" style={{ display: "inline" }}>
@@ -69,7 +70,7 @@ export function App() {
       {err && <div className="banner bad">{err} <button className="link" onClick={() => setErr("")}>dismiss</button></div>}
       {toast && <div className="toast" onAnimationEnd={() => setToast("")}>{toast}</div>}
 
-      {view === "calendar" ? <CalendarView /> : (
+      {view === "settings" ? <SettingsView /> : view === "calendar" ? <CalendarView /> : (
       <main>
         <section className="stats">
           <Stat label="Total" value={stats?.Total} />
@@ -124,6 +125,80 @@ export function App() {
       {detailId !== null && <DetailDrawer id={detailId} onClose={() => setDetailId(null)} />}
       {importing && <ImportPanel onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
     </div>
+  );
+}
+
+function DC_BASES(dc: string) {
+  const m: Record<string, [string, string]> = {
+    com: ["https://accounts.zoho.com", "https://calendar.zoho.com/api/v1"],
+    eu: ["https://accounts.zoho.eu", "https://calendar.zoho.eu/api/v1"],
+    in: ["https://accounts.zoho.in", "https://calendar.zoho.in/api/v1"],
+    "com.au": ["https://accounts.zoho.com.au", "https://calendar.zoho.com.au/api/v1"],
+    jp: ["https://accounts.zoho.jp", "https://calendar.zoho.jp/api/v1"],
+  };
+  return m[dc] || m.com;
+}
+
+function SettingsView() {
+  const [s, setS] = useState<ZohoSettings | null>(null);
+  const [clientId, setClientId] = useState("");
+  const [secret, setSecret] = useState("");
+  const [dc, setDc] = useState("com");
+  const [scopes, setScopes] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    api.zohoSettings().then((z) => {
+      setS(z); setClientId(z.client_id); setScopes(z.scopes);
+      // infer DC from accounts_base
+      const dcs = ["eu", "in", "com.au", "jp", "com"];
+      setDc(dcs.find((d) => z.accounts_base.includes("zoho." + d)) || "com");
+    }).catch((e) => setErr(e.message));
+  }, []);
+
+  async function save() {
+    setErr(""); setSaved(false);
+    const [accounts, calendar] = DC_BASES(dc);
+    try {
+      await api.saveZohoSettings({ client_id: clientId, client_secret: secret,
+        accounts_base: accounts, calendar_base: calendar, scopes });
+      setSecret(""); setSaved(true); setS(await api.zohoSettings());
+    } catch (e: any) { setErr(e.message); }
+  }
+
+  return (
+    <main>
+      <section className="card connect-card" style={{ textAlign: "left", maxWidth: 640, margin: "0 auto" }}>
+        <h3 style={{ textAlign: "center" }}>Zoho integration</h3>
+        <p className="muted" style={{ textAlign: "center" }}>Enter your organization's Zoho OAuth app so employees can connect their calendars. Register a Server-based app in the Zoho API Console.</p>
+
+        {s && <div className="fathom-bar" style={{ marginTop: 8 }}>
+          <span>Status: {s.configured ? <b style={{ color: "var(--ok)" }}>configured</b> : <b>not configured</b>}</span>
+        </div>}
+        <div className="fathom-bar" style={{ marginBottom: 18 }}>
+          <span>Register this redirect URI in the Zoho console:<br /><code>{s?.redirect_uri}</code></span>
+        </div>
+
+        <label className="field"><span>Client ID</span>
+          <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="1000.XXXXXXXX" /></label>
+        <label className="field"><span>Client Secret {s?.has_secret && <em className="muted">(leave blank to keep current)</em>}</span>
+          <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={s?.has_secret ? "••••••••" : "client secret"} /></label>
+        <div className="field-row">
+          <label className="field"><span>Data center</span>
+            <select value={dc} onChange={(e) => setDc(e.target.value)} style={{ padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text)" }}>
+              <option value="com">.com (US)</option><option value="eu">.eu (Europe)</option>
+              <option value="in">.in (India)</option><option value="com.au">.com.au (Australia)</option><option value="jp">.jp (Japan)</option>
+            </select></label>
+          <label className="field"><span>Scopes</span>
+            <input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="ZohoCalendar.calendar.READ,..." /></label>
+        </div>
+
+        {err && <div className="banner bad" style={{ marginTop: 14 }}>{err}</div>}
+        {saved && <div className="banner" style={{ marginTop: 14, background: "var(--ok-bg)", color: "var(--ok)" }}>Saved. Employees can now connect their Zoho calendars.</div>}
+        <div className="modal-actions"><button className="btn primary" disabled={!clientId} onClick={save}>Save Zoho settings</button></div>
+      </section>
+    </main>
   );
 }
 

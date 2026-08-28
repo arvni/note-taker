@@ -133,8 +133,45 @@ func serve(cfg *config.Config) {
 	onbRepo := onboarding.NewRepo(pool)
 	stateRepo := oauth.NewStateRepo(pool)
 	credStore := tokens.NewStore(pool, cipher)
-	zohoClient := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret,
-		cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, cfg.Zoho.Scopes)
+	// Per-org Zoho config: entered in the app (Settings) and stored encrypted, so
+	// one deployment serves any Zoho org. Falls back to env config if unset.
+	zohoSettings := tokens.NewZohoSettingsStore(pool, cipher)
+	zohoRedirect := cfg.Zoho.RedirectURI
+	if zohoRedirect == "" {
+		zohoRedirect = cfg.PublicBaseURL + "/oauth/zoho/callback"
+	}
+	zohoResolve := func(ctx context.Context, org db.OrgID) (oauth.OrgConfig, error) {
+		if oc, err := zohoSettings.OrgConfig(ctx, org, zohoRedirect); err == nil && oc.Configured() {
+			return oc, nil
+		}
+		if cfg.Zoho.ClientID != "" {
+			return oauth.OrgConfig{ClientID: cfg.Zoho.ClientID, ClientSecret: cfg.Zoho.ClientSecret,
+				AccountsBase: cfg.Zoho.AccountsBase, CalendarBase: cfg.Zoho.CalendarBase,
+				RedirectURI: zohoRedirect, Scopes: cfg.Zoho.Scopes}, nil
+		}
+		return oauth.OrgConfig{}, fmt.Errorf("zoho not configured for org %d", org)
+	}
+	refresherFor := func(ctx context.Context, org db.OrgID) (tokens.Refresher, error) {
+		oc, err := zohoResolve(ctx, org)
+		if err != nil {
+			return nil, err
+		}
+		return oc.Client(), nil
+	}
+	zohoRevokerFor := func(ctx context.Context, org db.OrgID) (tokens.ZohoRevoker, error) {
+		oc, err := zohoResolve(ctx, org)
+		if err != nil {
+			return nil, err
+		}
+		return oc.Client(), nil
+	}
+	calendarBaseFor := func(ctx context.Context, org db.OrgID) (string, error) {
+		oc, err := zohoResolve(ctx, org)
+		if err != nil {
+			return "", err
+		}
+		return oc.CalendarBase, nil
+	}
 
 	// Email sender: real SMTP relay when configured, else a dev logger.
 	var sender email.Sender = email.LogSender{}
@@ -158,9 +195,9 @@ func serve(cfg *config.Config) {
 	})
 
 	// Token lifecycle: refresh under a Redis lock, revoke, and detect revocation.
-	tokenMgr := tokens.NewManager(credStore, zohoClient, tokens.NewRedisLocker(redisClient), auditLog, onboardingSvc)
-	revoker := tokens.NewRevoker(credStore, zohoClient, empRepo, auditLog)
-	offboarder := tokens.NewOffboarder(credStore, zohoClient, empRepo, auditLog)
+	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, onboardingSvc)
+	revoker := tokens.NewRevoker(credStore, zohoRevokerFor, empRepo, auditLog)
+	offboarder := tokens.NewOffboarder(credStore, zohoRevokerFor, empRepo, auditLog)
 
 	// Directory reconciler: new employees are invited, inactive ones offboarded
 	// (spec §20, §19). The directory source that drives it is wired once the
@@ -170,27 +207,26 @@ func serve(cfg *config.Config) {
 	// Calendar discovery + scan (spec §27-32), driven per authorized employee by
 	// the sync loop in Phase 8.
 	calRepo := calendar.NewRepo(pool)
-	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calRepo, empRepo, auditLog)
+	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog)
 	_ = calSvc // consumed by the worker sync loops (Phase 8)
 
 	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{
-		Onboarding:   onbRepo,
-		States:       stateRepo,
-		Employees:    empRepo,
-		Creds:        credStore,
-		Client:       zohoClient,
-		Audit:        auditLog,
-		Templates:    tmpl,
-		AccountsBase: cfg.Zoho.AccountsBase,
-		CompanyName:  cfg.CompanyName,
-		AppName:      cfg.AppName,
-		Permissions:  cfg.ReadablePermissions(),
-		SupportAddr:  cfg.SupportAddr,
-		PrivacyURL:   cfg.PrivacyURL,
-		TermsURL:     cfg.TermsURL,
-		Security:     monitor,
-		ConnectRL:    connectRL.Wrap,
-		OAuthRL:      oauthRL.Wrap,
+		Onboarding:  onbRepo,
+		States:      stateRepo,
+		Employees:   empRepo,
+		Creds:       credStore,
+		Zoho:        zohoResolve,
+		Audit:       auditLog,
+		Templates:   tmpl,
+		CompanyName: cfg.CompanyName,
+		AppName:     cfg.AppName,
+		Permissions: cfg.ReadablePermissions(),
+		SupportAddr: cfg.SupportAddr,
+		PrivacyURL:  cfg.PrivacyURL,
+		TermsURL:    cfg.TermsURL,
+		Security:    monitor,
+		ConnectRL:   connectRL.Wrap,
+		OAuthRL:     oauthRL.Wrap,
 	})
 
 	mux := http.NewServeMux()
@@ -266,6 +302,7 @@ func serve(cfg *config.Config) {
 		fathomClient = fathom.NewClient(cfg.FathomAPIBase, cfg.FathomAPIKey)
 	}
 	httpx.NewFathomAdminHandler(fathomClient, tokens.NewFathomWebhookStore(pool), auth, cfg.PublicBaseURL, cfg.FathomAPIKey != "").Register(mux)
+	httpx.NewSettingsHandler(zohoSettings, auth, zohoRedirect).Register(mux)
 	if spaFS, err := web.SPA(); err == nil {
 		httpx.NewSPAHandler(spaFS).Register(mux)
 	} else {

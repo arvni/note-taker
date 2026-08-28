@@ -19,13 +19,13 @@ import (
 //  7. stop accessing calendar — no credential remains to use
 type Offboarder struct {
 	store     *Store
-	zoho      ZohoRevoker
+	zohoFor   ZohoRevokerFor
 	employees OnboardingSetter
 	audit     *audit.Logger
 }
 
-func NewOffboarder(store *Store, zoho ZohoRevoker, employees OnboardingSetter, auditLog *audit.Logger) *Offboarder {
-	return &Offboarder{store: store, zoho: zoho, employees: employees, audit: auditLog}
+func NewOffboarder(store *Store, zohoFor ZohoRevokerFor, employees OnboardingSetter, auditLog *audit.Logger) *Offboarder {
+	return &Offboarder{store: store, zohoFor: zohoFor, employees: employees, audit: auditLog}
 }
 
 // Offboard executes the offboarding sequence for an employee (spec §19). It is
@@ -33,8 +33,10 @@ func NewOffboarder(store *Store, zoho ZohoRevoker, employees OnboardingSetter, a
 func (o *Offboarder) Offboard(ctx context.Context, org db.OrgID, employeeID int64) error {
 	// 3. Best-effort Zoho revocation before deleting the token locally.
 	if cred, err := o.store.Get(ctx, employeeID); err == nil {
-		if err := o.zoho.Revoke(ctx, cred.RefreshToken); err != nil {
-			log.Printf("offboard: zoho revoke (continuing): %v", err)
+		if zoho, ferr := o.zohoFor(ctx, org); ferr == nil {
+			if err := zoho.Revoke(ctx, cred.RefreshToken); err != nil {
+				log.Printf("offboard: zoho revoke (continuing): %v", err)
+			}
 		}
 	} else if err != ErrNotFound {
 		return err

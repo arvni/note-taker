@@ -23,17 +23,28 @@ type PolicyProvider interface {
 
 // Service discovers calendars and scans enabled calendars for qualifying
 // meetings, storing only minimized event data (spec §27-32).
+// BaseFor resolves the org's Zoho Calendar API base URL (data-center specific).
+type BaseFor func(ctx context.Context, org db.OrgID) (string, error)
+
 type Service struct {
-	tokens TokenProvider
-	api    *APIClient
-	repo   *Repo
-	policy PolicyProvider
-	audit  *audit.Logger
-	window time.Duration // how far ahead to scan (<= 31 days per Zoho)
+	tokens  TokenProvider
+	baseFor BaseFor
+	repo    *Repo
+	policy  PolicyProvider
+	audit   *audit.Logger
+	window  time.Duration // how far ahead to scan (<= 31 days per Zoho)
 }
 
-func NewService(tp TokenProvider, api *APIClient, repo *Repo, pp PolicyProvider, auditLog *audit.Logger) *Service {
-	return &Service{tokens: tp, api: api, repo: repo, policy: pp, audit: auditLog, window: 30 * 24 * time.Hour}
+func NewService(tp TokenProvider, baseFor BaseFor, repo *Repo, pp PolicyProvider, auditLog *audit.Logger) *Service {
+	return &Service{tokens: tp, baseFor: baseFor, repo: repo, policy: pp, audit: auditLog, window: 30 * 24 * time.Hour}
+}
+
+func (s *Service) api(ctx context.Context, org db.OrgID) (*APIClient, error) {
+	base, err := s.baseFor(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	return NewAPIClient(base), nil
 }
 
 // Discover lists the employee's calendars and stores them, applying the default
@@ -43,7 +54,11 @@ func (s *Service) Discover(ctx context.Context, org db.OrgID, employeeID int64) 
 	if err != nil {
 		return 0, err
 	}
-	cals, err := s.api.ListCalendars(ctx, token)
+	api, err := s.api(ctx, org)
+	if err != nil {
+		return 0, err
+	}
+	cals, err := api.ListCalendars(ctx, token)
 	if err != nil {
 		return 0, err
 	}
@@ -76,6 +91,10 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 	}
 	rec := policy.Recording{EmployeeEnabled: empEnabled, OrgDefault: orgDefault, OrgOverrides: orgOverrides}
 
+	api, err := s.api(ctx, org)
+	if err != nil {
+		return 0, err
+	}
 	cals, err := s.repo.ListEnabledCalendars(ctx, employeeID)
 	if err != nil {
 		return 0, err
@@ -85,7 +104,7 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 
 	stored := 0
 	for _, cal := range cals {
-		events, err := s.api.ListEvents(ctx, token, cal.UID, from, to)
+		events, err := api.ListEvents(ctx, token, cal.UID, from, to)
 		if err != nil {
 			log.Printf("scan: employee=%d calendar=%s: %v", employeeID, cal.UID, err)
 			continue // one bad calendar shouldn't abort the whole scan

@@ -65,7 +65,7 @@ func TestOffboard_RevokesDeletesDisables(t *testing.T) {
 	t.Cleanup(z.Close)
 	client := oauth.NewClient("c", "s", "cb", z.URL, nil)
 
-	off := NewOffboarder(store, client, directory.NewRepo(pool), audit.New(audit.NewPostgresSink(pool)))
+	off := NewOffboarder(store, func(context.Context, db.OrgID) (ZohoRevoker, error) { return client, nil }, directory.NewRepo(pool), audit.New(audit.NewPostgresSink(pool)))
 	org := db.OrgID(oid)
 
 	if err := off.Offboard(ctx, org, eid); err != nil {

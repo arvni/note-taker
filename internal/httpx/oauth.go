@@ -27,20 +27,19 @@ type OAuthDeps struct {
 	States     *oauth.StateRepo
 	Employees  *directory.Repo
 	Creds      *tokens.Store
-	Client     *oauth.Client
+	Zoho       func(ctx context.Context, org db.OrgID) (oauth.OrgConfig, error)
 	Audit      *audit.Logger
 	Templates  *template.Template
 
-	AccountsBase string
-	CompanyName  string
-	AppName      string
-	Permissions  []string
-	SupportAddr  string
-	PrivacyURL   string
-	TermsURL     string
-	Security     SecurityRecorder
-	ConnectRL    Middleware
-	OAuthRL      Middleware
+	CompanyName string
+	AppName     string
+	Permissions []string
+	SupportAddr string
+	PrivacyURL  string
+	TermsURL    string
+	Security    SecurityRecorder
+	ConnectRL   Middleware
+	OAuthRL     Middleware
 }
 
 // SecurityRecorder records security events for threshold alerting (spec §36).
@@ -104,6 +103,11 @@ func (h *OAuthHandler) start(w http.ResponseWriter, r *http.Request) {
 		log.Printf("oauth start: set status: %v", err)
 	}
 
+	oc, err := h.d.Zoho(r.Context(), res.OrgID)
+	if err != nil || !oc.Configured() {
+		h.renderError(w, http.StatusServiceUnavailable, "Calendar integration is not configured yet. Please contact your administrator.")
+		return
+	}
 	rawState, stateHash, err := oauth.GenerateState()
 	if err != nil {
 		h.renderError(w, http.StatusInternalServerError, "Could not start authorization. Please try again.")
@@ -115,7 +119,7 @@ func (h *OAuthHandler) start(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r.Context(), res.OrgID, res.EmployeeID, audit.OAuthStarted, nil)
 
-	http.Redirect(w, r, h.d.Client.AuthorizeURL(rawState), http.StatusFound)
+	http.Redirect(w, r, oc.Client().AuthorizeURL(rawState), http.StatusFound)
 }
 
 // callback validates state, exchanges the code server-side, verifies the Zoho
@@ -149,7 +153,15 @@ func (h *OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tok, err := h.d.Client.ExchangeCode(r.Context(), code)
+	oc, err := h.d.Zoho(r.Context(), org)
+	if err != nil || !oc.Configured() {
+		h.fail(r.Context(), org, empID, "zoho not configured")
+		h.renderError(w, http.StatusServiceUnavailable, "Calendar integration is not configured. Please contact your administrator.")
+		return
+	}
+	zohoClient := oc.Client()
+
+	tok, err := zohoClient.ExchangeCode(r.Context(), code)
 	if err != nil {
 		h.fail(r.Context(), org, empID, "token exchange failed")
 		h.security("failed_oauth", clientIP(r))
@@ -157,7 +169,7 @@ func (h *OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := oauth.FetchIdentity(r.Context(), h.d.AccountsBase, tok.AccessToken)
+	id, err := oauth.FetchIdentity(r.Context(), oc.AccountsBase, tok.AccessToken)
 	if err != nil {
 		h.fail(r.Context(), org, empID, "identity fetch failed")
 		h.security("failed_oauth", clientIP(r))
@@ -189,7 +201,7 @@ func (h *OAuthHandler) callback(w http.ResponseWriter, r *http.Request) {
 		AccessToken:       tok.AccessToken,
 		RefreshToken:      tok.RefreshToken,
 		AccessExpiresAt:   tok.ExpiresAt(),
-		Scopes:            h.d.Client.Scopes,
+		Scopes:            oc.Scopes,
 		APIDomain:         tok.APIDomain,
 		Status:            tokens.StatusActive,
 	}); err != nil {

@@ -23,23 +23,28 @@ type OnboardingSetter interface {
 // revoke the Zoho refresh token, flip onboarding status, and audit. Stopping
 // sync jobs happens implicitly — AccessToken returns ErrRevoked once status is
 // no longer active. Token deletion per retention policy is handled in Phase 12.
+// ZohoRevokerFor resolves the org's Zoho client for revocation (spec §8).
+type ZohoRevokerFor func(ctx context.Context, org db.OrgID) (ZohoRevoker, error)
+
 type Revoker struct {
 	store     *Store
-	zoho      ZohoRevoker
+	zohoFor   ZohoRevokerFor
 	employees OnboardingSetter
 	audit     *audit.Logger
 }
 
-func NewRevoker(store *Store, zoho ZohoRevoker, employees OnboardingSetter, auditLog *audit.Logger) *Revoker {
-	return &Revoker{store: store, zoho: zoho, employees: employees, audit: auditLog}
+func NewRevoker(store *Store, zohoFor ZohoRevokerFor, employees OnboardingSetter, auditLog *audit.Logger) *Revoker {
+	return &Revoker{store: store, zohoFor: zohoFor, employees: employees, audit: auditLog}
 }
 
 // Revoke revokes access for an employee (spec §17).
 func (r *Revoker) Revoke(ctx context.Context, org db.OrgID, employeeID int64) error {
 	// Best-effort Zoho revocation using the stored refresh token.
 	if cred, err := r.store.Get(ctx, employeeID); err == nil {
-		if err := r.zoho.Revoke(ctx, cred.RefreshToken); err != nil {
-			log.Printf("revoke: zoho revoke (continuing to mark local revoked): %v", err)
+		if zoho, ferr := r.zohoFor(ctx, org); ferr == nil {
+			if err := zoho.Revoke(ctx, cred.RefreshToken); err != nil {
+				log.Printf("revoke: zoho revoke (continuing to mark local revoked): %v", err)
+			}
 		}
 	} else if err != ErrNotFound {
 		return err

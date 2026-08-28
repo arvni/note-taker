@@ -79,6 +79,10 @@ type spyReconnect struct{ called int }
 
 func (s *spyReconnect) Reconnect(context.Context, db.OrgID, int64) error { s.called++; return nil }
 
+func refFor(r Refresher) RefresherFor {
+	return func(context.Context, db.OrgID) (Refresher, error) { return r, nil }
+}
+
 func activeCred(expiresIn time.Duration) *Credential {
 	return &Credential{EmployeeID: 1, AccessToken: "old-acc", RefreshToken: "ref", Status: StatusActive,
 		AccessExpiresAt: time.Now().Add(expiresIn)}
@@ -87,7 +91,7 @@ func activeCred(expiresIn time.Duration) *Credential {
 func TestAccessToken_FreshNoRefresh(t *testing.T) {
 	store := &fakeStore{cred: activeCred(30 * time.Minute)}
 	ref := &fakeRefresher{}
-	m := NewManager(store, ref, &directLocker{}, nil, nil)
+	m := NewManager(store, refFor(ref), &directLocker{}, nil, nil)
 	tok, err := m.AccessToken(context.Background(), 1, 1)
 	if err != nil || tok != "old-acc" {
 		t.Fatalf("got %q err=%v, want old-acc", tok, err)
@@ -100,7 +104,7 @@ func TestAccessToken_FreshNoRefresh(t *testing.T) {
 func TestAccessToken_RefreshesNearExpiry(t *testing.T) {
 	store := &fakeStore{cred: activeCred(1 * time.Minute)}
 	ref := &fakeRefresher{resp: &oauth.TokenResponse{AccessToken: "new-acc", ExpiresIn: 3600}}
-	m := NewManager(store, ref, &directLocker{}, nil, nil)
+	m := NewManager(store, refFor(ref), &directLocker{}, nil, nil)
 	tok, err := m.AccessToken(context.Background(), 1, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +121,7 @@ func TestAccessToken_InvalidRefreshMarksRevokedAndReconnects(t *testing.T) {
 	store := &fakeStore{cred: activeCred(1 * time.Minute)}
 	ref := &fakeRefresher{err: &oauth.TokenError{Code: "invalid_code"}}
 	rc := &spyReconnect{}
-	m := NewManager(store, ref, &directLocker{}, nil, rc)
+	m := NewManager(store, refFor(ref), &directLocker{}, nil, rc)
 	_, err := m.AccessToken(context.Background(), 1, 1)
 	if !errors.Is(err, ErrRevoked) {
 		t.Fatalf("got %v, want ErrRevoked", err)
@@ -134,7 +138,7 @@ func TestAccessToken_TransientErrorDoesNotRevoke(t *testing.T) {
 	store := &fakeStore{cred: activeCred(1 * time.Minute)}
 	ref := &fakeRefresher{err: fmt.Errorf("connection reset")}
 	rc := &spyReconnect{}
-	m := NewManager(store, ref, &directLocker{}, nil, rc)
+	m := NewManager(store, refFor(ref), &directLocker{}, nil, rc)
 	_, err := m.AccessToken(context.Background(), 1, 1)
 	if err == nil {
 		t.Fatal("expected transient error")
@@ -154,7 +158,7 @@ func TestAccessToken_LockBusyReadsPeerResult(t *testing.T) {
 	// Force the refresh path by making expiry near, but lock busy.
 	store.setAccess("peer-acc", time.Now().Add(1*time.Minute))
 	ref := &fakeRefresher{}
-	m := NewManager(store, ref, busyLocker{}, nil, nil)
+	m := NewManager(store, refFor(ref), busyLocker{}, nil, nil)
 	// After the short wait, simulate peer having refreshed by extending expiry.
 	go func() {
 		time.Sleep(50 * time.Millisecond)

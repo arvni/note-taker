@@ -51,19 +51,23 @@ type Reconnector interface {
 
 // Manager provides valid access tokens, refreshing under a distributed lock and
 // detecting revocation (spec §15-18).
+// RefresherFor resolves the token Refresher (the org's Zoho OAuth client) for an
+// organization, so a single deployment serves any org's Zoho app (spec §8).
+type RefresherFor func(ctx context.Context, org db.OrgID) (Refresher, error)
+
 type Manager struct {
-	store       CredStore
-	refresher   Refresher
-	locker      Locker
-	audit       *audit.Logger
-	reconnect   Reconnector
-	refreshSkew time.Duration
-	lockTTL     time.Duration
+	store        CredStore
+	refresherFor RefresherFor
+	locker       Locker
+	audit        *audit.Logger
+	reconnect    Reconnector
+	refreshSkew  time.Duration
+	lockTTL      time.Duration
 }
 
-func NewManager(store CredStore, refresher Refresher, locker Locker, auditLog *audit.Logger, reconnect Reconnector) *Manager {
+func NewManager(store CredStore, refresherFor RefresherFor, locker Locker, auditLog *audit.Logger, reconnect Reconnector) *Manager {
 	return &Manager{
-		store: store, refresher: refresher, locker: locker, audit: auditLog, reconnect: reconnect,
+		store: store, refresherFor: refresherFor, locker: locker, audit: auditLog, reconnect: reconnect,
 		refreshSkew: DefaultRefreshSkew, lockTTL: DefaultLockTTL,
 	}
 }
@@ -98,7 +102,11 @@ func (m *Manager) AccessToken(ctx context.Context, org db.OrgID, employeeID int6
 			newToken = latest.AccessToken
 			return nil
 		}
-		return m.refresh(ctx, org, latest, &newToken)
+		refresher, err := m.refresherFor(ctx, org)
+		if err != nil {
+			return err
+		}
+		return m.refresh(ctx, org, refresher, latest, &newToken)
 	})
 
 	if errors.Is(lockErr, ErrLockBusy) {
@@ -121,8 +129,8 @@ func (m *Manager) AccessToken(ctx context.Context, org db.OrgID, employeeID int6
 
 // refresh performs the actual token refresh and persists the result, or marks
 // the credential revoked on a permanent failure (spec §15, §18).
-func (m *Manager) refresh(ctx context.Context, org db.OrgID, cred *Credential, out *string) error {
-	tr, err := m.refresher.Refresh(ctx, cred.RefreshToken)
+func (m *Manager) refresh(ctx context.Context, org db.OrgID, refresher Refresher, cred *Credential, out *string) error {
+	tr, err := refresher.Refresh(ctx, cred.RefreshToken)
 	if err != nil {
 		var te *oauth.TokenError
 		if errors.As(err, &te) && te.IsInvalidGrant() {

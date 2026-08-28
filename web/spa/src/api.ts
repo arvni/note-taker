@@ -21,6 +21,11 @@ export interface DestEvent {
   id: string; summary: string; location: string; description: string;
   htmlLink: string; status: string; start: { dateTime?: string }; end: { dateTime?: string };
 }
+export interface ZohoSettings {
+  configured: boolean; client_id: string; has_secret: boolean;
+  accounts_base: string; calendar_base: string; scopes: string;
+  directory_users_url?: string; redirect_uri: string;
+}
 export interface ImportResult {
   parsed: number; created: number; updated: number; disabled: number;
   reactivated: number; conflicts: string[]; row_errors: string[];
@@ -54,6 +59,10 @@ export const api = {
   invite(id: number): Promise<{ ok: boolean }> { return req(`/api/v1/employees/${id}/invite`, { method: "POST" }); },
   destStatus(): Promise<{ connected: boolean; calendar_id: string; connected_email: string; connect_url: string }> { return req("/api/v1/destination/status"); },
   destEvents(): Promise<{ connected: boolean; calendar_id: string; events: DestEvent[] }> { return req("/api/v1/destination/events"); },
+  zohoSettings(): Promise<ZohoSettings> { return req("/api/v1/settings/zoho"); },
+  saveZohoSettings(body: Partial<ZohoSettings> & { client_secret?: string }): Promise<{ ok: boolean }> {
+    return req("/api/v1/settings/zoho", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  },
   fathomStatus(): Promise<{ api_key_configured: boolean; registered: boolean; destination_url: string }> { return req("/api/v1/fathom/status"); },
   fathomRegister(): Promise<{ webhook_id: string; destination_url: string }> { return req("/api/v1/fathom/register", { method: "POST" }); },
   createDestEvent(body: { summary: string; location: string; description: string; start: string; end: string }): Promise<{ id: string }> {

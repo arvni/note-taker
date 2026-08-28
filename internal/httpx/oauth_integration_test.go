@@ -102,13 +102,14 @@ func buildApp(t *testing.T, pool *db.Pool, zohoBase string) (*http.ServeMux, *on
 	}
 	onb := onboarding.NewRepo(pool)
 	creds := tokens.NewStore(pool, cipher)
-	client := oauth.NewClient("cid", "csecret", "https://app.example/oauth/zoho/callback", zohoBase,
-		[]string{"ZohoCalendar.calendar.READ", "ZohoCalendar.event.READ", "aaaserver.profile.READ"})
+	oc := oauth.OrgConfig{ClientID: "cid", ClientSecret: "csecret",
+		RedirectURI: "https://app.example/oauth/zoho/callback", AccountsBase: zohoBase, CalendarBase: zohoBase,
+		Scopes: []string{"ZohoCalendar.calendar.READ", "ZohoCalendar.event.READ", "aaaserver.profile.READ"}}
 	h := NewOAuthHandler(OAuthDeps{
 		Onboarding: onb, States: oauth.NewStateRepo(pool), Employees: directory.NewRepo(pool),
-		Creds: creds, Client: client, Audit: audit.New(audit.NewPostgresSink(pool)), Templates: tmpl,
-		AccountsBase: zohoBase, CompanyName: "Acme", AppName: "Bridge",
-		Permissions: []string{"Read calendars"},
+		Creds: creds, Zoho: func(context.Context, db.OrgID) (oauth.OrgConfig, error) { return oc, nil },
+		Audit: audit.New(audit.NewPostgresSink(pool)), Templates: tmpl,
+		CompanyName: "Acme", AppName: "Bridge", Permissions: []string{"Read calendars"},
 	})
 	mux := http.NewServeMux()
 	h.Register(mux)

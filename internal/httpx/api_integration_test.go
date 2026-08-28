@@ -59,7 +59,7 @@ func TestRevokeEndpoint(t *testing.T) {
 	t.Cleanup(z.Close)
 	client := oauth.NewClient("cid", "sec", "https://app/cb", z.URL, nil)
 
-	revoker := tokens.NewRevoker(store, client, directory.NewRepo(pool), audit.New(audit.NewPostgresSink(pool)))
+	revoker := tokens.NewRevoker(store, func(context.Context, db.OrgID) (tokens.ZohoRevoker, error) { return client, nil }, directory.NewRepo(pool), audit.New(audit.NewPostgresSink(pool)))
 	mux := http.NewServeMux()
 	NewAPIHandler(revoker, nil).Register(mux)
 

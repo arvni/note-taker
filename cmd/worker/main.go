@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -71,12 +72,47 @@ func main() {
 	auditLog := audit.New(audit.NewPostgresSink(pool))
 	empRepo := directory.NewRepo(pool)
 	credStore := tokens.NewStore(pool, cipher)
-	zohoClient := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret,
-		cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, cfg.Zoho.Scopes)
-	tokenMgr := tokens.NewManager(credStore, zohoClient, tokens.NewRedisLocker(redisClient), auditLog, nil)
+	zohoSettings := tokens.NewZohoSettingsStore(pool, cipher)
+	zohoRedirect := cfg.Zoho.RedirectURI
+	if zohoRedirect == "" {
+		zohoRedirect = cfg.PublicBaseURL + "/oauth/zoho/callback"
+	}
+	zohoResolve := func(ctx context.Context, org db.OrgID) (oauth.OrgConfig, error) {
+		if oc, err := zohoSettings.OrgConfig(ctx, org, zohoRedirect); err == nil && oc.Configured() {
+			return oc, nil
+		}
+		if cfg.Zoho.ClientID != "" {
+			return oauth.OrgConfig{ClientID: cfg.Zoho.ClientID, ClientSecret: cfg.Zoho.ClientSecret,
+				AccountsBase: cfg.Zoho.AccountsBase, CalendarBase: cfg.Zoho.CalendarBase,
+				RedirectURI: zohoRedirect, Scopes: cfg.Zoho.Scopes}, nil
+		}
+		return oauth.OrgConfig{}, fmt.Errorf("zoho not configured for org %d", org)
+	}
+	refresherFor := func(ctx context.Context, org db.OrgID) (tokens.Refresher, error) {
+		oc, err := zohoResolve(ctx, org)
+		if err != nil {
+			return nil, err
+		}
+		return oc.Client(), nil
+	}
+	zohoRevokerFor := func(ctx context.Context, org db.OrgID) (tokens.ZohoRevoker, error) {
+		oc, err := zohoResolve(ctx, org)
+		if err != nil {
+			return nil, err
+		}
+		return oc.Client(), nil
+	}
+	calendarBaseFor := func(ctx context.Context, org db.OrgID) (string, error) {
+		oc, err := zohoResolve(ctx, org)
+		if err != nil {
+			return "", err
+		}
+		return oc.CalendarBase, nil
+	}
+	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, nil)
 
 	calRepo := calendar.NewRepo(pool)
-	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calRepo, empRepo, auditLog)
+	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog)
 
 	// Destination: the Google Calendar that Fathom watches (spec §42). Prefer a
 	// service-account key (JWT-bearer exchange); fall back to a static token.
@@ -126,17 +162,20 @@ func main() {
 			Permissions: cfg.ReadablePermissions(), SupportAddr: cfg.SupportAddr, PrivacyURL: cfg.PrivacyURL,
 			FromAddr: cfg.EmailFrom, TokenBytes: cfg.OnboardingTokenBytes, TTL: cfg.OnboardingTokenTTL,
 		})
-		offboarder := tokens.NewOffboarder(credStore, zohoClient, empRepo, auditLog)
+		offboarder := tokens.NewOffboarder(credStore, zohoRevokerFor, empRepo, auditLog)
 		reconciler := directory.NewReconciler(empRepo, onbSvc, offboarder)
 		dirClient := directory.NewZohoClient(cfg.ZohoDirectoryUsersURL)
-		// The directory refresh token is issued by the Self Client, so it must be
-		// refreshed with the Self Client's credentials (falls back to the main app).
-		dirCID, dirSecret := cfg.ZohoDirectoryClientID, cfg.ZohoDirectoryClientSecret
-		if dirCID == "" {
-			dirCID, dirSecret = cfg.Zoho.ClientID, cfg.Zoho.ClientSecret
-		}
-		dirOAuth := oauth.NewClient(dirCID, dirSecret, cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, nil)
+		// Refresh the directory token with the org's Zoho client (per-org config,
+		// env fallback). Optional dedicated Self-Client creds override.
 		tokenFn := func(ctx context.Context) (string, error) {
+			var dirOAuth *oauth.Client
+			if cfg.ZohoDirectoryClientID != "" {
+				dirOAuth = oauth.NewClient(cfg.ZohoDirectoryClientID, cfg.ZohoDirectoryClientSecret, zohoRedirect, cfg.Zoho.AccountsBase, nil)
+			} else if oc, err := zohoResolve(ctx, db.OrgID(cfg.AdminOrgID)); err == nil {
+				dirOAuth = oc.Client()
+			} else {
+				return "", err
+			}
 			tr, err := dirOAuth.Refresh(ctx, cfg.ZohoDirectoryRefreshToken)
 			if err != nil {
 				return "", err
