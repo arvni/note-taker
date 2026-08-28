@@ -11,9 +11,11 @@ import (
 	"github.com/arvinizadi/fathom/internal/fathom"
 )
 
-// RecordingMatcher correlates a Fathom meeting_url to a synced meeting (spec §42).
+// RecordingMatcher correlates a Fathom meeting_url to a synced meeting and stores
+// the recording link back onto it (spec §42-43).
 type RecordingMatcher interface {
 	FindByMeetingURL(ctx context.Context, meetingURL string) (*calendar.RecordedMatch, bool, error)
+	SaveRecording(ctx context.Context, meetingURL, recordingID, recordingURL string, hasTranscript, hasSummary bool) (int64, error)
 }
 
 // FathomHandler receives Fathom webhooks and confirms the recording chain: a
@@ -45,17 +47,24 @@ func (h *FathomHandler) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Correlate the recorded meeting back to a synced event to confirm the chain.
+	// Correlate the recorded meeting back to a synced event, store the recording
+	// link on it, and confirm the chain (spec §42-43).
 	if payload.MeetingURL != "" && h.matcher != nil {
 		match, found, err := h.matcher.FindByMeetingURL(r.Context(), payload.MeetingURL)
 		if err != nil {
 			log.Printf("fathom webhook: match: %v", err)
-		} else if found && h.audit != nil {
-			_ = h.audit.Log(r.Context(), audit.Entry{
-				EmployeeID: match.EmployeeID,
-				Action:     "fathom_meeting_recorded",
-				Metadata:   map[string]any{"source_event_id": match.SourceEventID, "recording_id": payload.RecordingID},
-			})
+		} else if found {
+			if _, err := h.matcher.SaveRecording(r.Context(), payload.MeetingURL, payload.RecordingID,
+				payload.RecordingURL, payload.Transcript != "", payload.Summary != ""); err != nil {
+				log.Printf("fathom webhook: save recording: %v", err)
+			}
+			if h.audit != nil {
+				_ = h.audit.Log(r.Context(), audit.Entry{
+					EmployeeID: match.EmployeeID,
+					Action:     "fathom_meeting_recorded",
+					Metadata:   map[string]any{"source_event_id": match.SourceEventID, "recording_id": payload.RecordingID},
+				})
+			}
 		}
 	}
 

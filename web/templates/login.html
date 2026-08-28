@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — {{.AppName}}</title>
+  <style>
+    :root { --bg:#f6f7f9; --panel:#fff; --border:#e3e6ea; --text:#1a1d21; --muted:#6b7280;
+      --brand:#2b6cb0; --shadow:0 1px 2px rgba(0,0,0,.05),0 10px 30px rgba(0,0,0,.06); }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+      --bg:#0f1216; --panel:#171b21; --border:#262c34; --text:#e6e9ee; --muted:#9aa4b2;
+      --brand:#4b93e0; --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 40px rgba(0,0,0,.4); } }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--brand) 12%, var(--bg)), var(--bg));
+      color: var(--text); font: 15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; padding:24px; }
+    .card { background: var(--panel); border:1px solid var(--border); border-radius:16px;
+      box-shadow: var(--shadow); width: min(400px, 100%); padding: 40px 36px; text-align:center; }
+    .logo { font-size:40px; line-height:1; margin-bottom:14px; }
+    h1 { font-size:20px; margin:0 0 4px; }
+    .sub { color: var(--muted); margin:0 0 28px; font-size:14px; }
+    .btn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%;
+      padding:12px 16px; border:1px solid var(--border); border-radius:10px; background:var(--panel);
+      color:var(--text); font:inherit; font-weight:600; cursor:pointer; text-decoration:none; }
+    .btn:hover { border-color: var(--brand); }
+    .btn svg { width:18px; height:18px; }
+    .note { margin-top:22px; color:var(--muted); font-size:12.5px; }
+    .err { background:#fbeaea; color:#b02a2a; border-radius:10px; padding:10px 12px; margin-bottom:18px; font-size:13px; }
+    @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .err{ background:#331a1a; color:#e8736f; } }
+    .foot { margin-top:20px; color:var(--muted); font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">📅</div>
+    <h1>{{.AppName}}</h1>
+    <p class="sub">{{.CompanyName}} · Admin sign-in</p>
+
+    {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+
+    {{if .SSOEnabled}}
+      <a class="btn" href="{{.StartURL}}">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.26 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z"/></svg>
+        Sign in with {{.Provider}}
+      </a>
+      <p class="note">Employees don't sign in here — you'll receive an email invitation to connect your calendar.</p>
+    {{else}}
+      <div class="err">Single sign-on is not configured yet. Set OIDC_ISSUER, OIDC_CLIENT_ID/SECRET, and ADMIN_EMAILS.</div>
+      <p class="note">Admins authenticate via your company's identity provider (Google Workspace, Microsoft Entra, or Zoho Directory SSO).</p>
+    {{end}}
+
+    <div class="foot">{{.CompanyName}} Calendar Bridge</div>
+  </div>
+</body>
+</html>

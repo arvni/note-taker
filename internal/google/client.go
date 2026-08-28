@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -78,6 +79,36 @@ func (c *Client) CreateEvent(ctx context.Context, e Event) (string, error) {
 		return "", fmt.Errorf("google: create event returned empty id")
 	}
 	return out.ID, nil
+}
+
+// ListedEvent is an event read back from the destination calendar.
+type ListedEvent struct {
+	ID          string `json:"id"`
+	Summary     string `json:"summary"`
+	Location    string `json:"location"`
+	Description string `json:"description"`
+	HTMLLink    string `json:"htmlLink"`
+	Status      string `json:"status"`
+	Start       gTime  `json:"start"`
+	End         gTime  `json:"end"`
+}
+
+// ListEvents returns events in the destination calendar within [timeMin,timeMax]
+// (RFC3339), expanded and ordered by start time.
+func (c *Client) ListEvents(ctx context.Context, timeMin, timeMax time.Time) ([]ListedEvent, error) {
+	q := url.Values{}
+	q.Set("timeMin", timeMin.Format(time.RFC3339))
+	q.Set("timeMax", timeMax.Format(time.RFC3339))
+	q.Set("singleEvents", "true")
+	q.Set("orderBy", "startTime")
+	q.Set("maxResults", "250")
+	var out struct {
+		Items []ListedEvent `json:"items"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/calendars/"+c.CalendarID+"/events?"+q.Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
 }
 
 // UpdateEvent updates an existing destination event (spec §14 objective).

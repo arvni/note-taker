@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/arvinizadi/fathom/internal/audit"
@@ -22,6 +23,8 @@ import (
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
 	"github.com/arvinizadi/fathom/internal/email"
+	"github.com/arvinizadi/fathom/internal/fathom"
+	"github.com/arvinizadi/fathom/internal/google"
 	"github.com/arvinizadi/fathom/internal/httpx"
 	"github.com/arvinizadi/fathom/internal/oauth"
 	"github.com/arvinizadi/fathom/internal/oidc"
@@ -220,6 +223,54 @@ func serve(cfg *config.Config) {
 		Templates: tmpl, CompanyName: cfg.CompanyName,
 	}).Register(mux)
 	httpx.NewImportHandler(reconciler, auth, tmpl).Register(mux)
+
+	// Destination (Fathom-watched) Google Calendar (spec §42): connected by an
+	// admin via OAuth ("Connect Google Calendar"), or a static/service-account
+	// token from config. Resolved per request from the stored credential.
+	destStore := tokens.NewGoogleDestStore(pool, cipher)
+	var googleOAuth *google.OAuthClient
+	if cfg.GoogleOAuthClientID != "" && cfg.GoogleOAuthClientSecret != "" {
+		redirect := cfg.GoogleOAuthRedirectURL
+		if redirect == "" {
+			redirect = cfg.PublicBaseURL + "/oauth/google/callback"
+		}
+		googleOAuth = google.NewOAuthClient(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, redirect)
+	}
+	resolveDest := func(ctx context.Context, org db.OrgID) httpx.Destination {
+		// 1) Admin-connected OAuth credential (preferred).
+		if d, err := destStore.Get(ctx, org); err == nil && googleOAuth != nil {
+			ts := google.NewRefreshTokenSource(googleOAuth, d.RefreshToken)
+			return httpx.Destination{Cal: google.NewClient(cfg.GoogleCalendarBase, d.CalendarID, ts),
+				CalendarID: d.CalendarID, ConnectedEmail: d.ConnectedEmail, Connected: true}
+		}
+		// 2) Static / service-account token from config.
+		if cfg.GoogleCalendarID != "" && (cfg.GoogleCredentialsFile != "" || cfg.GoogleAccessToken != "") {
+			var gts google.TokenSource = google.StaticToken(cfg.GoogleAccessToken)
+			if cfg.GoogleCredentialsFile != "" {
+				if key, err := os.ReadFile(cfg.GoogleCredentialsFile); err == nil {
+					if sa, err := google.NewServiceAccountTokenSource(key, google.CalendarScope, cfg.GoogleSubject); err == nil {
+						gts = sa
+					}
+				}
+			}
+			return httpx.Destination{Cal: google.NewClient(cfg.GoogleCalendarBase, cfg.GoogleCalendarID, gts),
+				CalendarID: cfg.GoogleCalendarID, Connected: true}
+		}
+		return httpx.Destination{Connected: false}
+	}
+	httpx.NewDestinationHandler(resolveDest, auth).Register(mux)
+	httpx.NewGoogleConnectHandler(googleOAuth, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
+	httpx.NewAPIv1(empRepo, calRepo, reconciler, revoker, onboardingSvc, auth).Register(mux)
+	var fathomClient httpx.FathomWebhookCreator
+	if cfg.FathomAPIKey != "" {
+		fathomClient = fathom.NewClient(cfg.FathomAPIBase, cfg.FathomAPIKey)
+	}
+	httpx.NewFathomAdminHandler(fathomClient, tokens.NewFathomWebhookStore(pool), auth, cfg.PublicBaseURL, cfg.FathomAPIKey != "").Register(mux)
+	if spaFS, err := web.SPA(); err == nil {
+		httpx.NewSPAHandler(spaFS).Register(mux)
+	} else {
+		log.Printf("server: admin SPA not embedded: %v", err)
+	}
 	// Admin OIDC login (spec §39). Enabled when OIDC_ISSUER is configured.
 	var loginFlow httpx.OIDCFlow
 	var mapper httpx.AdminMapper
@@ -231,7 +282,16 @@ func serve(cfg *config.Config) {
 		mapper = httpx.NewAllowlistMapper(cfg.AdminOrgID, cfg.AdminEmails)
 		log.Printf("admin SSO enabled (issuer=%s, %d admin(s))", cfg.OIDCIssuer, len(cfg.AdminEmails))
 	}
-	httpx.NewLoginHandler(loginFlow, mapper, sessions, sessionKey, cfg.IsProduction()).Register(mux)
+	providerName := "SSO"
+	switch {
+	case strings.Contains(cfg.OIDCIssuer, "google"):
+		providerName = "Google Workspace"
+	case strings.Contains(cfg.OIDCIssuer, "microsoft") || strings.Contains(cfg.OIDCIssuer, "login.microsoftonline"):
+		providerName = "Microsoft"
+	case strings.Contains(cfg.OIDCIssuer, "zoho"):
+		providerName = "Zoho"
+	}
+	httpx.NewLoginHandler(loginFlow, mapper, sessions, sessionKey, cfg.IsProduction(), tmpl, cfg.CompanyName, cfg.AppName, providerName).Register(mux)
 
 	log.Printf("server listening on %s (env=%s)", cfg.HTTPAddr, cfg.AppEnv)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, mux))

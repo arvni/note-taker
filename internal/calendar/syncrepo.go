@@ -138,3 +138,66 @@ func (r *Repo) Now(ctx context.Context) (time.Time, error) {
 	err := r.pool.QueryRow(ctx, `SELECT now()`).Scan(&t)
 	return t, err
 }
+
+// MappingView is a synced meeting for the admin detail view.
+type MappingView struct {
+	SourceEventID      string     `json:"source_event_id"`
+	CalendarUID        string     `json:"calendar_uid"`
+	Title              string     `json:"title"`
+	StartsAt           *time.Time `json:"starts_at"`
+	EndsAt             *time.Time `json:"ends_at"`
+	MeetingProvider    string     `json:"meeting_provider"`
+	MeetingURL         string     `json:"meeting_url"`
+	DestinationEventID string     `json:"destination_event_id"`
+	Synced             bool       `json:"synced"`
+	Cancelled          bool       `json:"cancelled"`
+	RecordingURL       string     `json:"recording_url"`
+	HasTranscript      bool       `json:"has_transcript"`
+	HasSummary         bool       `json:"has_summary"`
+	RecordedAt         *time.Time `json:"recorded_at"`
+}
+
+// ListMappings returns an employee's meeting mappings, newest first, for the
+// admin detail view.
+func (r *Repo) ListMappings(ctx context.Context, employeeID int64) ([]MappingView, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT source_event_id, calendar_uid, coalesce(title,''), starts_at, ends_at,
+		       coalesce(meeting_provider,''), coalesce(meeting_url,''),
+		       coalesce(destination_event_id,''), (destination_event_id IS NOT NULL),
+		       (cancelled_at IS NOT NULL), coalesce(fathom_recording_url,''),
+		       fathom_has_transcript, fathom_has_summary, fathom_recorded_at
+		FROM event_mappings
+		WHERE employee_id = $1
+		ORDER BY starts_at DESC NULLS LAST
+		LIMIT 200`, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MappingView{}
+	for rows.Next() {
+		var m MappingView
+		if err := rows.Scan(&m.SourceEventID, &m.CalendarUID, &m.Title, &m.StartsAt, &m.EndsAt,
+			&m.MeetingProvider, &m.MeetingURL, &m.DestinationEventID, &m.Synced, &m.Cancelled,
+			&m.RecordingURL, &m.HasTranscript, &m.HasSummary, &m.RecordedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// SaveRecording links a Fathom recording back to the matching meeting(s) by
+// meeting_url (spec §42-43). Returns the number of mappings updated.
+func (r *Repo) SaveRecording(ctx context.Context, meetingURL, recordingID, recordingURL string, hasTranscript, hasSummary bool) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE event_mappings
+		SET fathom_recording_id = $2, fathom_recording_url = $3,
+		    fathom_has_transcript = $4, fathom_has_summary = $5,
+		    fathom_recorded_at = now(), updated_at = now()
+		WHERE meeting_url = $1`, meetingURL, recordingID, recordingURL, hasTranscript, hasSummary)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

@@ -9,10 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
 	"github.com/arvinizadi/fathom/internal/rbac"
 )
+
+type nopInviter struct{}
+
+func (nopInviter) Invite(context.Context, db.OrgID, int64) error { return nil }
 
 func TestAPIv1(t *testing.T) {
 	url := os.Getenv("DATABASE_URL")
@@ -39,7 +44,7 @@ func TestAPIv1(t *testing.T) {
 	sessions := rbac.NewSessionManager([]byte("0123456789abcdef0123456789abcdef"), time.Hour, false)
 	auth := NewAuthMiddleware(sessions)
 	mux := http.NewServeMux()
-	NewAPIv1(empRepo, directory.NewReconciler(empRepo, nil, nil), &nopRevoker{}, auth).Register(mux)
+	NewAPIv1(empRepo, calendar.NewRepo(pool), directory.NewReconciler(empRepo, nil, nil), &nopRevoker{}, nopInviter{}, auth).Register(mux)
 
 	rec := httptest.NewRecorder()
 	_, _ = sessions.Issue(rec, rbac.Principal{OrgID: oid, Role: rbac.OrgAdmin, Email: "admin@company.com"})

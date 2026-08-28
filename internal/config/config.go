@@ -37,11 +37,14 @@ type Config struct {
 	PrivacyURL  string
 	TermsURL    string
 
-	GoogleCalendarBase    string
-	GoogleCalendarID      string
-	GoogleAccessToken     string
-	GoogleCredentialsFile string
-	GoogleSubject         string
+	GoogleCalendarBase      string
+	GoogleCalendarID        string
+	GoogleAccessToken       string
+	GoogleCredentialsFile   string
+	GoogleSubject           string
+	GoogleOAuthClientID     string
+	GoogleOAuthClientSecret string
+	GoogleOAuthRedirectURL  string
 
 	FathomAPIBase string
 	FathomAPIKey  string
@@ -121,11 +124,14 @@ func Load() (*Config, error) {
 		PrivacyURL:  env("PRIVACY_URL", ""),
 		TermsURL:    env("TERMS_URL", ""),
 
-		GoogleCalendarBase:    env("GOOGLE_CALENDAR_BASE", "https://www.googleapis.com/calendar/v3"),
-		GoogleCalendarID:      env("GOOGLE_CALENDAR_ID", ""),
-		GoogleAccessToken:     env("GOOGLE_ACCESS_TOKEN", ""),
-		GoogleCredentialsFile: env("GOOGLE_CREDENTIALS_FILE", ""),
-		GoogleSubject:         env("GOOGLE_SUBJECT", ""),
+		GoogleCalendarBase:      env("GOOGLE_CALENDAR_BASE", "https://www.googleapis.com/calendar/v3"),
+		GoogleCalendarID:        env("GOOGLE_CALENDAR_ID", ""),
+		GoogleAccessToken:       env("GOOGLE_ACCESS_TOKEN", ""),
+		GoogleCredentialsFile:   env("GOOGLE_CREDENTIALS_FILE", ""),
+		GoogleSubject:           env("GOOGLE_SUBJECT", ""),
+		GoogleOAuthClientID:     env("GOOGLE_OAUTH_CLIENT_ID", ""),
+		GoogleOAuthClientSecret: env("GOOGLE_OAUTH_CLIENT_SECRET", ""),
+		GoogleOAuthRedirectURL:  env("GOOGLE_OAUTH_REDIRECT_URL", ""),
 
 		FathomAPIBase: env("FATHOM_API_BASE", "https://api.fathom.ai/external/v1"),
 		FathomAPIKey:  env("FATHOM_API_KEY", ""),

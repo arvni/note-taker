@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -55,23 +56,47 @@ func (m *AllowlistMapper) Map(c *oidc.Claims) (*rbac.Principal, error) {
 
 // LoginHandler drives admin OIDC login and issues the session (spec §38-39).
 type LoginHandler struct {
-	flow     OIDCFlow
-	mapper   AdminMapper
-	sessions *rbac.SessionManager
-	stateKey []byte // HMAC key for the short-lived state/nonce cookie
-	secure   bool
+	flow        OIDCFlow
+	mapper      AdminMapper
+	sessions    *rbac.SessionManager
+	stateKey    []byte // HMAC key for the short-lived state/nonce cookie
+	secure      bool
+	templates   *template.Template
+	companyName string
+	appName     string
+	provider    string
 }
 
-func NewLoginHandler(flow OIDCFlow, mapper AdminMapper, sessions *rbac.SessionManager, stateKey []byte, secure bool) *LoginHandler {
-	return &LoginHandler{flow: flow, mapper: mapper, sessions: sessions, stateKey: stateKey, secure: secure}
+func NewLoginHandler(flow OIDCFlow, mapper AdminMapper, sessions *rbac.SessionManager, stateKey []byte, secure bool, templates *template.Template, companyName, appName, provider string) *LoginHandler {
+	if provider == "" {
+		provider = "SSO"
+	}
+	return &LoginHandler{flow: flow, mapper: mapper, sessions: sessions, stateKey: stateKey, secure: secure,
+		templates: templates, companyName: companyName, appName: appName, provider: provider}
 }
 
 const stateCookie = "fathom_oidc_state"
 
 func (h *LoginHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /login", h.login)
+	mux.HandleFunc("GET /login", h.page)
+	mux.HandleFunc("GET /auth/start", h.start)
 	mux.HandleFunc("GET /auth/callback", h.callback)
 	mux.HandleFunc("POST /logout", h.logout)
+}
+
+// page renders the branded sign-in page (spec §23, §39).
+func (h *LoginHandler) page(w http.ResponseWriter, r *http.Request) {
+	// Already signed in? Go to the app.
+	if _, _, err := h.sessions.Verify(r); err == nil {
+		http.Redirect(w, r, "/app/", http.StatusFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = h.templates.ExecuteTemplate(w, "login.html", map[string]any{
+		"AppName": h.appName, "CompanyName": h.companyName, "Provider": h.provider,
+		"SSOEnabled": h.flow != nil, "StartURL": "/auth/start",
+		"Error": r.URL.Query().Get("error"),
+	})
 }
 
 type stateData struct {
@@ -80,7 +105,7 @@ type stateData struct {
 	Exp   int64  `json:"e"`
 }
 
-func (h *LoginHandler) login(w http.ResponseWriter, r *http.Request) {
+func (h *LoginHandler) start(w http.ResponseWriter, r *http.Request) {
 	if h.flow == nil {
 		http.Error(w, "SSO is not configured", http.StatusNotImplemented)
 		return
