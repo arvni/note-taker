@@ -57,6 +57,19 @@ type Config struct {
 	RetentionPurgeInterval time.Duration
 	RetentionAudit         time.Duration
 	RetentionMappings      time.Duration
+
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCRedirectURL  string
+	OIDCHostedDomain string
+	AdminEmails      []string
+	AdminOrgID       int64
+
+	SMTPHost string
+	SMTPPort string
+	SMTPUser string
+	SMTPPass string
 }
 
 type ZohoConfig struct {
@@ -123,6 +136,19 @@ func Load() (*Config, error) {
 		RetentionPurgeInterval: dur("RETENTION_PURGE_INTERVAL", 24*time.Hour),
 		RetentionAudit:         dur("RETENTION_AUDIT", 365*24*time.Hour),
 		RetentionMappings:      dur("RETENTION_MAPPINGS", 365*24*time.Hour),
+
+		OIDCIssuer:       env("OIDC_ISSUER", ""),
+		OIDCClientID:     env("OIDC_CLIENT_ID", ""),
+		OIDCClientSecret: env("OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURL:  env("OIDC_REDIRECT_URL", ""),
+		OIDCHostedDomain: env("OIDC_HOSTED_DOMAIN", ""),
+		AdminEmails:      splitCSV(env("ADMIN_EMAILS", "")),
+		AdminOrgID:       int64(intEnv("ADMIN_ORG_ID", 1)),
+
+		SMTPHost: env("SMTP_HOST", ""),
+		SMTPPort: env("SMTP_PORT", "587"),
+		SMTPUser: env("SMTP_USER", ""),
+		SMTPPass: env("SMTP_PASS", ""),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).

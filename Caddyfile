@@ -1,0 +1,6 @@
+# Replace calendar-sync.example.com with your real domain (DNS A record -> this host).
+# Caddy obtains and renews a Let's Encrypt certificate automatically.
+calendar-sync.example.com {
+	encode gzip
+	reverse_proxy server:8080
+}

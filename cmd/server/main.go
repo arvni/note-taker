@@ -24,6 +24,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/email"
 	"github.com/arvinizadi/fathom/internal/httpx"
 	"github.com/arvinizadi/fathom/internal/oauth"
+	"github.com/arvinizadi/fathom/internal/oidc"
 	"github.com/arvinizadi/fathom/internal/onboarding"
 	"github.com/arvinizadi/fathom/internal/rbac"
 	"github.com/arvinizadi/fathom/internal/redisx"
@@ -132,9 +133,16 @@ func serve(cfg *config.Config) {
 	zohoClient := oauth.NewClient(cfg.Zoho.ClientID, cfg.Zoho.ClientSecret,
 		cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, cfg.Zoho.Scopes)
 
+	// Email sender: real SMTP relay when configured, else a dev logger.
+	var sender email.Sender = email.LogSender{}
+	if cfg.SMTPHost != "" {
+		sender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailFrom)
+		log.Print("email: using SMTP relay " + cfg.SMTPHost)
+	}
+
 	// Onboarding service doubles as the reconnect trigger when a credential goes
 	// invalid (spec §18, §45).
-	onboardingSvc := onboarding.NewService(onbRepo, empStore{empRepo}, email.LogSender{}, auditLog, tmpl, onboarding.Config{
+	onboardingSvc := onboarding.NewService(onbRepo, empStore{empRepo}, sender, auditLog, tmpl, onboarding.Config{
 		BaseURL:     cfg.PublicBaseURL,
 		CompanyName: cfg.CompanyName,
 		AppName:     cfg.AppName,
@@ -211,7 +219,18 @@ func serve(cfg *config.Config) {
 		Employees: empRepo, Calendars: calRepo, Revoker: revoker, Auth: auth,
 		Templates: tmpl, CompanyName: cfg.CompanyName,
 	}).Register(mux)
-	httpx.NewLoginHandler(nil, sessions).Register(mux) // IdP wired per company (spec §39)
+	// Admin OIDC login (spec §39). Enabled when OIDC_ISSUER is configured.
+	var loginFlow httpx.OIDCFlow
+	var mapper httpx.AdminMapper
+	if cfg.OIDCIssuer != "" {
+		loginFlow = oidc.New(oidc.Config{
+			IssuerURL: cfg.OIDCIssuer, ClientID: cfg.OIDCClientID, ClientSecret: cfg.OIDCClientSecret,
+			RedirectURL: cfg.OIDCRedirectURL, HostedDomain: cfg.OIDCHostedDomain,
+		})
+		mapper = httpx.NewAllowlistMapper(cfg.AdminOrgID, cfg.AdminEmails)
+		log.Printf("admin SSO enabled (issuer=%s, %d admin(s))", cfg.OIDCIssuer, len(cfg.AdminEmails))
+	}
+	httpx.NewLoginHandler(loginFlow, mapper, sessions, sessionKey, cfg.IsProduction()).Register(mux)
 
 	log.Printf("server listening on %s (env=%s)", cfg.HTTPAddr, cfg.AppEnv)
 	log.Fatal(http.ListenAndServe(cfg.HTTPAddr, mux))

@@ -6,6 +6,8 @@
 # Env / secrets — never commit
 .env
 .env.local
+.env.prod
+secrets/
 *.pem
 *.key
 
