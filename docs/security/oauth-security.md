@@ -139,3 +139,20 @@ credentials):
   ZOHO_DIRECTORY_CLIENT_ID / ZOHO_DIRECTORY_CLIENT_SECRET = the Self Client
   ZOHO_DIRECTORY_REFRESH_TOKEN = from exchanging a Self Client grant with
     scope ZohoDirectory.Users.READ (+ Orgs.READ to discover org_id)
+
+
+### Directory: server-based app works (no Self Client needed) — validated end to end
+
+Confirmed the server-based CALENDAR app (single client) can access the Directory
+API when authorized with the directory scopes alongside the calendar scopes:
+GET /orgs and /orgs/{id}/users both returned 200. So a separate Self Client is
+NOT required — one Zoho app + one admin-authorized directory refresh token.
+
+End-to-end: ran AutoSync against the live directory + a real Postgres. It fetched
+12 users and created 12 employee records with correct mapping (full_name, not the
+job-title display_name; primary_email; user_status). created=12.
+
+Simplified production config (single app):
+  ZOHO_DIRECTORY_USERS_URL=https://www.zohoapis.com/directory/api/v2/orgs/936948838/users?page=1&per_page=500&include=emails
+  ZOHO_DIRECTORY_REFRESH_TOKEN=<admin token from authorizing the CALENDAR app with ZohoDirectory.Users.READ>
+  ZOHO_DIRECTORY_CLIENT_ID / _SECRET = leave BLANK (worker falls back to the main app to refresh)
