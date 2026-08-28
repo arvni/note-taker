@@ -20,3 +20,8 @@ coverage.out
 .DS_Store
 .idea/
 *.swp
+# stray compiled binaries from `go build ./cmd/...`
+/chain
+/poc
+/server
+/worker
