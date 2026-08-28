@@ -53,25 +53,42 @@ Admin login: visit `https://<domain>/login` (must be an allowlisted admin email)
 
 ## Employee source: Zoho Directory auto-sync vs CSV
 
-Two ways to populate employees (spec §3):
+Two ways to populate employees (spec §3). Both are implemented and validated.
 
-**A. CSV import (guaranteed)** — leave the directory vars blank. Upload/import an
-`email,name,department,status` CSV. This always works.
+### Option A — Zoho Directory auto-sync (validated end to end)
 
-**B. Zoho Directory auto-sync** — the worker pulls the org's users hourly,
-inviting new active employees and offboarding inactive ones. It needs:
-- `ZOHO_DIRECTORY_USERS_URL` — your org's Directory users REST endpoint. This is
-  org- and data-center-specific (Zoho exposes it via SCIM/IAM, not a single public
-  URL), so set it to whatever your Zoho admin console provides.
-- `ZOHO_DIRECTORY_REFRESH_TOKEN` — an org-level refresh token with the directory
-  read scope. Create a **Self Client** in the Zoho API Console (or have an admin
-  authorize once), granting the directory scope, and paste the refresh token here.
-  It is exchanged for access tokens automatically; it is never a per-employee token.
+The worker pulls the org's users hourly and reconciles them (invite new active,
+offboard inactive). It uses the **server-based calendar app** — no separate Self
+Client is needed. One-time admin setup:
 
-The response is mapped defensively (`zuid`, `emails[].email_id`, `is_active`,
-`display_name`). If your endpoint differs, the mapping in `internal/directory`
-adjusts in one place. When both vars are set, the worker logs
-"Zoho Directory auto-sync enabled"; otherwise "CSV import mode".
+1. **Enroll the org in Zoho Directory** (directory.zoho.com) and confirm the admin
+   account is a Directory admin. (If GET /orgs returns no orgs, this step is missing.)
+2. **Find the Directory org_id** (a number from the API, NOT the console ZOID):
+   authorize the calendar app once with `ZohoDirectory.Orgs.READ,ZohoDirectory.Users.READ`
+   and call `GET https://www.zohoapis.com/directory/api/v2/orgs`. The `org_id` is in
+   the response. (`cmd/dirprobe` automates this and prints the refresh token.)
+3. **Get a directory refresh token**: authorize the calendar app (as the Directory
+   admin) with scope `ZohoDirectory.Users.READ` (a one-time consent, separate from
+   employee calendar consent) and keep the returned refresh token.
+4. **Configure** (in `.env.prod`):
+   ```
+   ZOHO_DIRECTORY_USERS_URL=https://www.zohoapis.com/directory/api/v2/orgs/<ORG_ID>/users?page=1&per_page=500&include=emails
+   ZOHO_DIRECTORY_REFRESH_TOKEN=<the directory refresh token>
+   # ZOHO_DIRECTORY_CLIENT_ID / _SECRET: leave blank (refreshed with the main app)
+   ADMIN_ORG_ID=<the local organizations.id row this maps to>
+   ```
+   Ensure an `organizations` row exists with id = ADMIN_ORG_ID.
+
+When both the URL and refresh token are set, the worker logs
+"Zoho Directory auto-sync enabled". Response fields are mapped from the live v2
+shape: `zuid`, `primary_email`/`emails[].email_id`, `full_name` (name),
+`user_status` (active/inactive). There is no department field in Directory v2.
+
+### Option B — CSV import (always works)
+
+Leave the directory vars blank. An admin uploads `email,name,department,status`
+CSV at `/admin/import` (behind OIDC login + CSRF); new active employees are
+invited, inactive ones offboarded. Use this if the org is not on Zoho Directory.
 
 ## Upgrades
 ```bash
