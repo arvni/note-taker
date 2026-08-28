@@ -28,7 +28,6 @@ func NewDashboardHandler(d DashboardDeps) *DashboardHandler { return &DashboardH
 
 // Register wires dashboard routes behind auth + permission checks (spec §41).
 func (h *DashboardHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /admin", h.d.Auth.RequirePerm(rbac.ViewOrgStatus, h.admin))
 	mux.HandleFunc("GET /me", h.d.Auth.RequirePerm(rbac.ViewOwnStatus, h.me))
 	mux.HandleFunc("POST /me/disconnect", h.d.Auth.RequirePerm(rbac.RevokeSelf, h.disconnect))
 	mux.HandleFunc("POST /me/calendars", h.d.Auth.RequirePerm(rbac.ConnectSelf, h.manageCalendars))

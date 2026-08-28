@@ -138,7 +138,7 @@ func (h *LoginHandler) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session error", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/app/", http.StatusSeeOther)
 }
 
 func (h *LoginHandler) logout(w http.ResponseWriter, r *http.Request) {

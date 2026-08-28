@@ -58,36 +58,11 @@ func TestDashboardRBAC(t *testing.T) {
 		return rec.Result().Cookies()[0], csrf
 	}
 
-	// Unauthenticated → 401.
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/admin", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unauth /admin: %d", rec.Code)
-	}
-
-	// Employee cannot access /admin → 403.
 	empCookie, _ := issue(rbac.Principal{OrgID: oid, Role: rbac.Employee, EmployeeID: eid})
-	rec = httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/admin", nil)
-	req.AddCookie(empCookie)
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("employee /admin: %d, want 403", rec.Code)
-	}
-
-	// Admin can access /admin → 200.
-	adminCookie, _ := issue(rbac.Principal{OrgID: oid, Role: rbac.OrgAdmin})
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", "/admin", nil)
-	req.AddCookie(adminCookie)
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Acme") {
-		t.Fatalf("admin /admin: %d", rec.Code)
-	}
 
 	// Employee /me → 200.
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("GET", "/me", nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/me", nil)
 	req.AddCookie(empCookie)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

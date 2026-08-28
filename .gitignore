@@ -27,3 +27,6 @@ coverage.out
 /worker
 /dirprobe
 /dirprobe
+
+# SPA build
+web/spa/node_modules/
