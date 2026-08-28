@@ -70,6 +70,9 @@ type Config struct {
 	SMTPPort string
 	SMTPUser string
 	SMTPPass string
+
+	ZohoDirectoryUsersURL     string
+	ZohoDirectoryRefreshToken string
 }
 
 type ZohoConfig struct {
@@ -149,6 +152,9 @@ func Load() (*Config, error) {
 		SMTPPort: env("SMTP_PORT", "587"),
 		SMTPUser: env("SMTP_USER", ""),
 		SMTPPass: env("SMTP_PASS", ""),
+
+		ZohoDirectoryUsersURL:     env("ZOHO_DIRECTORY_USERS_URL", ""),
+		ZohoDirectoryRefreshToken: env("ZOHO_DIRECTORY_REFRESH_TOKEN", ""),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).

@@ -17,13 +17,31 @@ import (
 	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
+	"github.com/arvinizadi/fathom/internal/email"
 	"github.com/arvinizadi/fathom/internal/google"
 	"github.com/arvinizadi/fathom/internal/oauth"
+	"github.com/arvinizadi/fathom/internal/onboarding"
 	"github.com/arvinizadi/fathom/internal/redisx"
 	"github.com/arvinizadi/fathom/internal/retention"
 	"github.com/arvinizadi/fathom/internal/sync"
 	"github.com/arvinizadi/fathom/internal/tokens"
+	"github.com/arvinizadi/fathom/web"
 )
+
+// empStore adapts *directory.Repo to onboarding.EmployeeStore.
+type empStore struct{ repo *directory.Repo }
+
+func (a empStore) GetByID(ctx context.Context, org db.OrgID, id int64) (string, string, error) {
+	e, err := a.repo.GetByID(ctx, org, id)
+	if err != nil {
+		return "", "", err
+	}
+	return e.Email, e.Name, nil
+}
+
+func (a empStore) SetOnboardingStatus(ctx context.Context, org db.OrgID, id int64, status string) error {
+	return a.repo.SetOnboardingStatus(ctx, org, id, status)
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -90,6 +108,43 @@ func main() {
 		_, err := purger.Purge(ctx)
 		return err
 	})
+
+	// Directory auto-sync (spec §20): pull org users from Zoho Directory and
+	// reconcile (invite new, offboard inactive). Requires a directory users URL +
+	// an org-level refresh token; otherwise employees onboard via CSV import.
+	if cfg.ZohoDirectoryUsersURL != "" && cfg.ZohoDirectoryRefreshToken != "" {
+		tmpl, err := web.Templates()
+		if err != nil {
+			log.Fatalf("worker: templates: %v", err)
+		}
+		var sender email.Sender = email.LogSender{}
+		if cfg.SMTPHost != "" {
+			sender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailFrom)
+		}
+		onbSvc := onboarding.NewService(onboarding.NewRepo(pool), empStore{empRepo}, sender, auditLog, tmpl, onboarding.Config{
+			BaseURL: cfg.PublicBaseURL, CompanyName: cfg.CompanyName, AppName: cfg.AppName,
+			Permissions: cfg.ReadablePermissions(), SupportAddr: cfg.SupportAddr, PrivacyURL: cfg.PrivacyURL,
+			FromAddr: cfg.EmailFrom, TokenBytes: cfg.OnboardingTokenBytes, TTL: cfg.OnboardingTokenTTL,
+		})
+		offboarder := tokens.NewOffboarder(credStore, zohoClient, empRepo, auditLog)
+		reconciler := directory.NewReconciler(empRepo, onbSvc, offboarder)
+		dirClient := directory.NewZohoClient(cfg.ZohoDirectoryUsersURL)
+		tokenFn := func(ctx context.Context) (string, error) {
+			tr, err := zohoClient.Refresh(ctx, cfg.ZohoDirectoryRefreshToken)
+			if err != nil {
+				return "", err
+			}
+			return tr.AccessToken, nil
+		}
+		autoSync := directory.NewAutoSync(dirClient, reconciler, tokenFn, db.OrgID(cfg.AdminOrgID))
+		go directory.RunPeriodic(ctx, cfg.DirectorySyncInterval, func(ctx context.Context) error {
+			_, err := autoSync.SyncOnce(ctx)
+			return err
+		})
+		log.Print("worker: Zoho Directory auto-sync enabled")
+	} else {
+		log.Print("worker: directory auto-sync disabled (CSV import mode); set ZOHO_DIRECTORY_USERS_URL + ZOHO_DIRECTORY_REFRESH_TOKEN to enable")
+	}
 
 	directory.RunPeriodic(ctx, cfg.DirectorySyncInterval, func(ctx context.Context) error {
 		return syncAllEmployees(ctx, empRepo, engine)

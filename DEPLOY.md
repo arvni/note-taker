@@ -50,6 +50,29 @@ Admin login: visit `https://<domain>/login` (must be an allowlisted admin email)
   configure `ZOHO_DIRECTORY_USERS_URL` if your org's Directory API is available.
 - Employees receive the consent email and connect their Zoho Calendar.
 
+
+## Employee source: Zoho Directory auto-sync vs CSV
+
+Two ways to populate employees (spec §3):
+
+**A. CSV import (guaranteed)** — leave the directory vars blank. Upload/import an
+`email,name,department,status` CSV. This always works.
+
+**B. Zoho Directory auto-sync** — the worker pulls the org's users hourly,
+inviting new active employees and offboarding inactive ones. It needs:
+- `ZOHO_DIRECTORY_USERS_URL` — your org's Directory users REST endpoint. This is
+  org- and data-center-specific (Zoho exposes it via SCIM/IAM, not a single public
+  URL), so set it to whatever your Zoho admin console provides.
+- `ZOHO_DIRECTORY_REFRESH_TOKEN` — an org-level refresh token with the directory
+  read scope. Create a **Self Client** in the Zoho API Console (or have an admin
+  authorize once), granting the directory scope, and paste the refresh token here.
+  It is exchanged for access tokens automatically; it is never a per-employee token.
+
+The response is mapped defensively (`zuid`, `emails[].email_id`, `is_active`,
+`display_name`). If your endpoint differs, the mapping in `internal/directory`
+adjusts in one place. When both vars are set, the worker logs
+"Zoho Directory auto-sync enabled"; otherwise "CSV import mode".
+
 ## Upgrades
 ```bash
 git pull
