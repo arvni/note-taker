@@ -252,20 +252,29 @@ func serve(cfg *config.Config) {
 	// admin via OAuth ("Connect Google Calendar"), or a static/service-account
 	// token from config. Resolved per request from the stored credential.
 	destStore := tokens.NewGoogleDestStore(pool, cipher)
-	var googleOAuth *google.OAuthClient
-	if cfg.GoogleOAuthClientID != "" && cfg.GoogleOAuthClientSecret != "" {
-		redirect := cfg.GoogleOAuthRedirectURL
-		if redirect == "" {
-			redirect = cfg.PublicBaseURL + "/oauth/google/callback"
+	googleRedirect := cfg.GoogleOAuthRedirectURL
+	if googleRedirect == "" {
+		googleRedirect = cfg.PublicBaseURL + "/oauth/google/callback"
+	}
+	// The Google OAuth client is resolved per org: stored app settings first
+	// (entered in the UI), env fallback. Returns nil when unconfigured.
+	googleOAuthFor := func(ctx context.Context, org db.OrgID) *google.OAuthClient {
+		if a, err := appSettings.Get(ctx, org); err == nil && a.GoogleOAuthClientID != "" && a.GoogleOAuthClientSecret != "" {
+			return google.NewOAuthClient(a.GoogleOAuthClientID, a.GoogleOAuthClientSecret, googleRedirect)
 		}
-		googleOAuth = google.NewOAuthClient(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, redirect)
+		if cfg.GoogleOAuthClientID != "" && cfg.GoogleOAuthClientSecret != "" {
+			return google.NewOAuthClient(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, googleRedirect)
+		}
+		return nil
 	}
 	resolveDest := func(ctx context.Context, org db.OrgID) httpx.Destination {
 		// 1) Admin-connected OAuth credential (preferred).
-		if d, err := destStore.Get(ctx, org); err == nil && googleOAuth != nil {
-			ts := google.NewRefreshTokenSource(googleOAuth, d.RefreshToken)
-			return httpx.Destination{Cal: google.NewClient(cfg.GoogleCalendarBase, d.CalendarID, ts),
-				CalendarID: d.CalendarID, ConnectedEmail: d.ConnectedEmail, Connected: true}
+		if d, err := destStore.Get(ctx, org); err == nil {
+			if googleOAuth := googleOAuthFor(ctx, org); googleOAuth != nil {
+				ts := google.NewRefreshTokenSource(googleOAuth, d.RefreshToken)
+				return httpx.Destination{Cal: google.NewClient(cfg.GoogleCalendarBase, d.CalendarID, ts),
+					CalendarID: d.CalendarID, ConnectedEmail: d.ConnectedEmail, Connected: true}
+			}
 		}
 		// 2) Static / service-account token from config.
 		if cfg.GoogleCalendarID != "" && (cfg.GoogleCredentialsFile != "" || cfg.GoogleAccessToken != "") {
@@ -283,13 +292,13 @@ func serve(cfg *config.Config) {
 		return httpx.Destination{Connected: false}
 	}
 	httpx.NewDestinationHandler(resolveDest, auth).Register(mux)
-	httpx.NewGoogleConnectHandler(googleOAuth, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
+	httpx.NewGoogleConnectHandler(googleOAuthFor, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
 	httpx.NewAPIv1(empRepo, calRepo, reconciler, revoker, onboardingSvc, auth).Register(mux)
 	fathomKeyFor := func(ctx context.Context, org db.OrgID) string {
 		return wire.FathomAPIKey(ctx, appSettings, org, cfg.FathomAPIKey)
 	}
 	httpx.NewFathomAdminHandler(cfg.FathomAPIBase, fathomKeyFor, tokens.NewFathomWebhookStore(pool), auth, cfg.PublicBaseURL).Register(mux)
-	httpx.NewSettingsHandler(zohoSettings, appSettings, auth, zohoRedirect).Register(mux)
+	httpx.NewSettingsHandler(zohoSettings, appSettings, auth, zohoRedirect, googleRedirect).Register(mux)
 	if spaFS, err := web.SPA(); err == nil {
 		httpx.NewSPAHandler(spaFS).Register(mux)
 	} else {

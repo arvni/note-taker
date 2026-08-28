@@ -28,14 +28,15 @@ type AppSettingsRepo interface {
 // Fathom in the UI, so one deployment serves any org (spec §8, §21-23, §53).
 // Requires ManagePolicies.
 type SettingsHandler struct {
-	store    ZohoSettingsRepo
-	app      AppSettingsRepo
-	auth     *AuthMiddleware
-	redirect string // the callback URI to register in the Zoho console
+	store     ZohoSettingsRepo
+	app       AppSettingsRepo
+	auth      *AuthMiddleware
+	redirect  string // the Zoho callback URI to register in the Zoho console
+	gRedirect string // the Google OAuth callback URI to register in Google Cloud
 }
 
-func NewSettingsHandler(store ZohoSettingsRepo, app AppSettingsRepo, auth *AuthMiddleware, redirect string) *SettingsHandler {
-	return &SettingsHandler{store: store, app: app, auth: auth, redirect: redirect}
+func NewSettingsHandler(store ZohoSettingsRepo, app AppSettingsRepo, auth *AuthMiddleware, redirect, googleRedirect string) *SettingsHandler {
+	return &SettingsHandler{store: store, app: app, auth: auth, redirect: redirect, gRedirect: googleRedirect}
 }
 
 func (h *SettingsHandler) Register(mux *http.ServeMux) {
@@ -50,7 +51,9 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"smtp_host": "", "smtp_port": "587", "smtp_user": "", "has_smtp_pass": false, "email_from": "",
 		"company_name": "", "app_name": "", "support_addr": "", "privacy_url": "", "terms_url": "",
-		"has_fathom_key": false,
+		"has_fathom_key":         false,
+		"google_oauth_client_id": "", "has_google_secret": false,
+		"google_redirect_uri": h.gRedirect, // register this in Google Cloud Console
 	}
 	if a, err := h.app.Get(r.Context(), db.OrgID(p.OrgID)); err == nil {
 		out["smtp_host"] = a.SMTPHost
@@ -64,6 +67,8 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 		out["privacy_url"] = a.PrivacyURL
 		out["terms_url"] = a.TermsURL
 		out["has_fathom_key"] = a.FathomAPIKey != ""
+		out["google_oauth_client_id"] = a.GoogleOAuthClientID
+		out["has_google_secret"] = a.GoogleOAuthClientSecret != ""
 	} else if !errors.Is(err, tokens.ErrNoAppSettings) {
 		writeErr(w, http.StatusInternalServerError, "could not load settings")
 		return
@@ -72,17 +77,19 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 }
 
 type appSettingsReq struct {
-	SMTPHost    string `json:"smtp_host"`
-	SMTPPort    string `json:"smtp_port"`
-	SMTPUser    string `json:"smtp_user"`
-	SMTPPass    string `json:"smtp_pass"`
-	EmailFrom   string `json:"email_from"`
-	CompanyName string `json:"company_name"`
-	AppName     string `json:"app_name"`
-	SupportAddr string `json:"support_addr"`
-	PrivacyURL  string `json:"privacy_url"`
-	TermsURL    string `json:"terms_url"`
-	FathomKey   string `json:"fathom_api_key"`
+	SMTPHost       string `json:"smtp_host"`
+	SMTPPort       string `json:"smtp_port"`
+	SMTPUser       string `json:"smtp_user"`
+	SMTPPass       string `json:"smtp_pass"`
+	EmailFrom      string `json:"email_from"`
+	CompanyName    string `json:"company_name"`
+	AppName        string `json:"app_name"`
+	SupportAddr    string `json:"support_addr"`
+	PrivacyURL     string `json:"privacy_url"`
+	TermsURL       string `json:"terms_url"`
+	FathomKey      string `json:"fathom_api_key"`
+	GoogleClientID string `json:"google_oauth_client_id"`
+	GoogleSecret   string `json:"google_oauth_client_secret"`
 }
 
 func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +103,9 @@ func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
 		SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUser: req.SMTPUser, SMTPPass: req.SMTPPass,
 		EmailFrom: req.EmailFrom, CompanyName: req.CompanyName, AppName: req.AppName,
 		SupportAddr: req.SupportAddr, PrivacyURL: req.PrivacyURL, TermsURL: req.TermsURL,
-		FathomAPIKey: req.FathomKey,
+		FathomAPIKey:            req.FathomKey,
+		GoogleOAuthClientID:     req.GoogleClientID,
+		GoogleOAuthClientSecret: req.GoogleSecret,
 	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not save settings")
 		return

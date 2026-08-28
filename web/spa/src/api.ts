@@ -30,6 +30,7 @@ export interface AppSettings {
   smtp_host: string; smtp_port: string; smtp_user: string; has_smtp_pass: boolean; email_from: string;
   company_name: string; app_name: string; support_addr: string; privacy_url: string; terms_url: string;
   has_fathom_key: boolean;
+  google_oauth_client_id: string; has_google_secret: boolean; google_redirect_uri: string;
 }
 export interface ImportResult {
   parsed: number; created: number; updated: number; disabled: number;

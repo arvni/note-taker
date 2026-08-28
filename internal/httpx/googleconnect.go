@@ -27,7 +27,7 @@ type GoogleDestSaver interface {
 // GoogleConnectHandler runs the "Connect Google Calendar" OAuth flow so an admin
 // can authorize the destination calendar from the UI (spec §42).
 type GoogleConnectHandler struct {
-	oauth      *google.OAuthClient
+	oauthFor   func(ctx context.Context, org db.OrgID) *google.OAuthClient
 	store      GoogleDestSaver
 	sessions   *rbac.SessionManager
 	auth       *AuthMiddleware
@@ -36,11 +36,11 @@ type GoogleConnectHandler struct {
 	secure     bool
 }
 
-func NewGoogleConnectHandler(oauth *google.OAuthClient, store GoogleDestSaver, sessions *rbac.SessionManager, auth *AuthMiddleware, calendarID string, stateKey []byte, secure bool) *GoogleConnectHandler {
+func NewGoogleConnectHandler(oauthFor func(ctx context.Context, org db.OrgID) *google.OAuthClient, store GoogleDestSaver, sessions *rbac.SessionManager, auth *AuthMiddleware, calendarID string, stateKey []byte, secure bool) *GoogleConnectHandler {
 	if calendarID == "" {
 		calendarID = "primary"
 	}
-	return &GoogleConnectHandler{oauth: oauth, store: store, sessions: sessions, auth: auth, calendarID: calendarID, stateKey: stateKey, secure: secure}
+	return &GoogleConnectHandler{oauthFor: oauthFor, store: store, sessions: sessions, auth: auth, calendarID: calendarID, stateKey: stateKey, secure: secure}
 }
 
 const gStateCookie = "fathom_gconnect"
@@ -51,26 +51,29 @@ func (h *GoogleConnectHandler) Register(mux *http.ServeMux) {
 }
 
 func (h *GoogleConnectHandler) connect(w http.ResponseWriter, r *http.Request) {
-	if h.oauth == nil {
-		http.Error(w, "Google OAuth not configured (set GOOGLE_OAUTH_CLIENT_ID/SECRET/REDIRECT_URL)", http.StatusNotImplemented)
+	p, _ := PrincipalFrom(r)
+	oauth := h.oauthFor(r.Context(), db.OrgID(p.OrgID))
+	if oauth == nil {
+		http.Error(w, "Google OAuth is not configured. Add the Google OAuth client in Settings.", http.StatusNotImplemented)
 		return
 	}
 	state := randToken32()
 	payload := base64.RawURLEncoding.EncodeToString([]byte(state + "|" + itoa64(time.Now().Add(10*time.Minute).Unix())))
 	http.SetCookie(w, &http.Cookie{Name: gStateCookie, Value: payload + "." + h.sign(payload), Path: "/",
 		HttpOnly: true, Secure: h.secure, SameSite: http.SameSiteLaxMode, MaxAge: 600})
-	http.Redirect(w, r, h.oauth.AuthCodeURL(state), http.StatusFound)
+	http.Redirect(w, r, oauth.AuthCodeURL(state), http.StatusFound)
 }
 
 func (h *GoogleConnectHandler) callback(w http.ResponseWriter, r *http.Request) {
-	if h.oauth == nil {
-		http.Error(w, "Google OAuth not configured", http.StatusNotImplemented)
-		return
-	}
 	// The admin must be signed in — the credential is stored for their org.
 	principal, _, err := h.sessions.Verify(r)
 	if err != nil {
 		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	oauth := h.oauthFor(r.Context(), db.OrgID(principal.OrgID))
+	if oauth == nil {
+		http.Error(w, "Google OAuth not configured", http.StatusNotImplemented)
 		return
 	}
 	if !h.verifyState(r) {
@@ -82,7 +85,7 @@ func (h *GoogleConnectHandler) callback(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing code: "+r.URL.Query().Get("error"), http.StatusBadRequest)
 		return
 	}
-	access, refresh, err := h.oauth.Exchange(r.Context(), code)
+	access, refresh, err := oauth.Exchange(r.Context(), code)
 	if err != nil {
 		log.Printf("google connect: exchange: %v", err)
 		http.Error(w, "could not connect Google", http.StatusBadGateway)
