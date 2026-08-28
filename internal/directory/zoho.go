@@ -66,9 +66,9 @@ func parseDirectoryUsers(body []byte) ([]User, error) {
 		u := User{
 			ZohoUserID: str(m["zuid"]),
 			Email:      primaryEmail(m),
-			Name:       firstNonEmpty(str(m["display_name"]), str(m["full_name"]), joinName(m)),
+			Name:       firstNonEmpty(str(m["full_name"]), joinName(m), str(m["display_name"])),
 			Department: str(m["department"]),
-			Status:     statusFromActive(m["is_active"]),
+			Status:     directoryStatus(m),
 		}.Normalize()
 		if u.Valid() {
 			out = append(out, u)
@@ -102,11 +102,19 @@ func primaryEmail(m map[string]any) string {
 			return first
 		}
 	}
-	return firstNonEmpty(str(m["email_id"]), str(m["email"]), str(m["primaryEmailAddress"]))
+	return firstNonEmpty(str(m["primary_email"]), str(m["email_id"]), str(m["email"]), str(m["primaryEmailAddress"]))
 }
 
-func statusFromActive(v any) Status {
-	if b, ok := v.(bool); ok && !b {
+func directoryStatus(m map[string]any) Status {
+	// Zoho Directory v2 reports user_status as a string ("active"/"inactive").
+	if st := strings.ToLower(str(m["user_status"])); st != "" {
+		if st == "active" {
+			return Active
+		}
+		return Inactive
+	}
+	// Fallback: some responses use an is_active boolean.
+	if b, ok := m["is_active"].(bool); ok && !b {
 		return Inactive
 	}
 	return Active

@@ -42,13 +42,17 @@ func main() {
 	form.Set("code", grant)
 	tokBody := post(ctx, hc, cfg.Zoho.AccountsBase+"/oauth/v2/token", form)
 	var tok struct {
-		AccessToken string `json:"access_token"`
-		APIDomain   string `json:"api_domain"`
-		Error       string `json:"error"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		APIDomain    string `json:"api_domain"`
+		Error        string `json:"error"`
 	}
 	json.Unmarshal(tokBody, &tok)
 	if tok.AccessToken == "" {
 		log.Fatalf("grant exchange failed: %s", string(tokBody))
+	}
+	if tok.RefreshToken != "" {
+		fmt.Printf("REFRESH TOKEN (store as ZOHO_DIRECTORY_REFRESH_TOKEN): %s\n", tok.RefreshToken)
 	}
 	api := tok.APIDomain
 	if api == "" {
@@ -61,15 +65,18 @@ func main() {
 	fmt.Printf("\n── GET /orgs ──\n%s\n", string(orgsBody))
 	var orgs struct {
 		Orgs []struct {
-			OrgID       string `json:"org_id"`
-			DisplayName string `json:"display_name"`
+			OrgID       json.Number `json:"org_id"`
+			DisplayName string      `json:"display_name"`
 		} `json:"orgs"`
 	}
 	json.Unmarshal(orgsBody, &orgs)
 	if len(orgs.Orgs) == 0 {
 		log.Fatal("\nNo orgs returned — the token's account is not a Directory admin/owner. Grant Directory Super Admin or use an owner account.")
 	}
-	orgID := orgs.Orgs[0].OrgID
+	orgID := orgs.Orgs[0].OrgID.String()
+	if v := os.Getenv("DIRPROBE_ORGID"); v != "" {
+		orgID = v
+	}
 	fmt.Printf("\n✓ org_id = %s (%s)\n", orgID, orgs.Orgs[0].DisplayName)
 
 	// 3) GET /orgs/{org_id}/users?include=emails

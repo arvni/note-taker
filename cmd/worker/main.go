@@ -129,8 +129,15 @@ func main() {
 		offboarder := tokens.NewOffboarder(credStore, zohoClient, empRepo, auditLog)
 		reconciler := directory.NewReconciler(empRepo, onbSvc, offboarder)
 		dirClient := directory.NewZohoClient(cfg.ZohoDirectoryUsersURL)
+		// The directory refresh token is issued by the Self Client, so it must be
+		// refreshed with the Self Client's credentials (falls back to the main app).
+		dirCID, dirSecret := cfg.ZohoDirectoryClientID, cfg.ZohoDirectoryClientSecret
+		if dirCID == "" {
+			dirCID, dirSecret = cfg.Zoho.ClientID, cfg.Zoho.ClientSecret
+		}
+		dirOAuth := oauth.NewClient(dirCID, dirSecret, cfg.Zoho.RedirectURI, cfg.Zoho.AccountsBase, nil)
 		tokenFn := func(ctx context.Context) (string, error) {
-			tr, err := zohoClient.Refresh(ctx, cfg.ZohoDirectoryRefreshToken)
+			tr, err := dirOAuth.Refresh(ctx, cfg.ZohoDirectoryRefreshToken)
 			if err != nil {
 				return "", err
 			}

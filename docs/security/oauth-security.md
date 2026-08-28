@@ -116,3 +116,26 @@ No request shape can change a "no orgs" 404. Resolution is a Zoho admin task
 
 Decision: CSV import is the employee source for this deployment. The AutoSync
 driver + ZohoClient remain ready for any org whose GET /orgs returns an org_id.
+
+
+### Directory: SOLVED (2026-08-28)
+
+After enrolling the org in Zoho Directory, the Self Client flow returned 200 with
+the org and users. Confirmed live values for Bion Genetic (.com):
+
+- GET /directory/api/v2/orgs -> org_id 936948838 (numeric; NOT the console ZOID).
+- GET /directory/api/v2/orgs/936948838/users?page=1&per_page=500&include=emails -> 200.
+- Real user fields (v2): user_id, zuid, primary_email, emails[].{email_id,is_primary,
+  is_verified}, first_name, last_name, full_name, display_name (a JOB TITLE, not the
+  name), user_status ("active"/"inactive"), user_type. There is no department field.
+
+Mapping fixed in internal/directory/zoho.go: name from full_name (not display_name),
+status from user_status string (not is_active bool), email from primary_email/emails.
+Regression test uses the captured JSON.
+
+Production config (org-level token from a Self Client; refresh with the Self Client
+credentials):
+  ZOHO_DIRECTORY_USERS_URL=https://www.zohoapis.com/directory/api/v2/orgs/936948838/users?page=1&per_page=500&include=emails
+  ZOHO_DIRECTORY_CLIENT_ID / ZOHO_DIRECTORY_CLIENT_SECRET = the Self Client
+  ZOHO_DIRECTORY_REFRESH_TOKEN = from exchanging a Self Client grant with
+    scope ZohoDirectory.Users.READ (+ Orgs.READ to discover org_id)

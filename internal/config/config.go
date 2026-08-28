@@ -73,6 +73,8 @@ type Config struct {
 
 	ZohoDirectoryUsersURL     string
 	ZohoDirectoryRefreshToken string
+	ZohoDirectoryClientID     string
+	ZohoDirectoryClientSecret string
 }
 
 type ZohoConfig struct {
@@ -155,6 +157,8 @@ func Load() (*Config, error) {
 
 		ZohoDirectoryUsersURL:     env("ZOHO_DIRECTORY_USERS_URL", ""),
 		ZohoDirectoryRefreshToken: env("ZOHO_DIRECTORY_REFRESH_TOKEN", ""),
+		ZohoDirectoryClientID:     env("ZOHO_DIRECTORY_CLIENT_ID", ""),
+		ZohoDirectoryClientSecret: env("ZOHO_DIRECTORY_CLIENT_SECRET", ""),
 	}
 
 	// Guard: never allow Zoho Mail scopes to slip in (spec §33).
