@@ -168,7 +168,7 @@ func serve(cfg *config.Config) {
 	// the sync loop in Phase 8.
 	calRepo := calendar.NewRepo(pool)
 	calSvc := calendar.NewService(tokenMgr, calendar.NewAPIClient(cfg.Zoho.CalendarBase), calRepo, empRepo, auditLog)
-	_, _ = reconciler, calSvc // consumed by the worker sync loops (Phase 8)
+	_ = calSvc // consumed by the worker sync loops (Phase 8)
 
 	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{
 		Onboarding:   onbRepo,
@@ -219,6 +219,7 @@ func serve(cfg *config.Config) {
 		Employees: empRepo, Calendars: calRepo, Revoker: revoker, Auth: auth,
 		Templates: tmpl, CompanyName: cfg.CompanyName,
 	}).Register(mux)
+	httpx.NewImportHandler(reconciler, auth, tmpl).Register(mux)
 	// Admin OIDC login (spec §39). Enabled when OIDC_ISSUER is configured.
 	var loginFlow httpx.OIDCFlow
 	var mapper httpx.AdminMapper

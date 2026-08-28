@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Import employees</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;max-width:640px;margin:0 auto;padding:24px">
+  <h2>Import employees (CSV)</h2>
+  <p style="color:#555">Header row required: <code>email,name,department,status</code>.
+  New active employees are invited; employees marked inactive are offboarded.</p>
+
+  {{if .Error}}<p style="color:#b02a2a"><strong>Error:</strong> {{.Error}}</p>{{end}}
+
+  {{if .Done}}
+  <div style="background:#f0f7f0;border:1px solid #cde3cd;padding:12px;border-radius:6px">
+    <strong>Import complete.</strong><br>
+    Parsed: {{.Parsed}} · Created: {{.Created}} · Updated: {{.Updated}}
+    · Disabled: {{.Disabled}} · Reactivated: {{.Reactivated}}
+    {{if .Conflicts}}
+      <p style="color:#8a6d00"><strong>Conflicts ({{len .Conflicts}}):</strong></p>
+      <ul>{{range .Conflicts}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
+    {{if .RowErrors}}
+      <p style="color:#b02a2a"><strong>Skipped rows ({{len .RowErrors}}):</strong></p>
+      <ul>{{range .RowErrors}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
+  </div>
+  <p><a href="/admin/import">Import another</a> · <a href="/admin">Back to dashboard</a></p>
+  {{else}}
+  <form method="POST" action="/admin/employees/import" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <p><input type="file" name="file" accept=".csv" required></p>
+    <p><button type="submit">Upload &amp; sync</button></p>
+  </form>
+  {{end}}
+</body>
+</html>
