@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/arvinizadi/fathom/internal/db"
@@ -70,6 +71,7 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 		out["google_oauth_client_id"] = a.GoogleOAuthClientID
 		out["has_google_secret"] = a.GoogleOAuthClientSecret != ""
 	} else if !errors.Is(err, tokens.ErrNoAppSettings) {
+		log.Printf("settings getApp org=%d: %v", p.OrgID, err)
 		writeErr(w, http.StatusInternalServerError, "could not load settings")
 		return
 	}
@@ -107,6 +109,7 @@ func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
 		GoogleOAuthClientID:     req.GoogleClientID,
 		GoogleOAuthClientSecret: req.GoogleSecret,
 	}); err != nil {
+		log.Printf("settings putApp org=%d: %v", p.OrgID, err)
 		writeErr(w, http.StatusInternalServerError, "could not save settings")
 		return
 	}
@@ -131,6 +134,7 @@ func (h *SettingsHandler) get(w http.ResponseWriter, r *http.Request) {
 		out["scopes"] = zs.Scopes
 		out["directory_users_url"] = zs.DirectoryUsersURL
 	} else if !errors.Is(err, tokens.ErrNoZohoSettings) {
+		log.Printf("settings getZoho org=%d: %v", p.OrgID, err)
 		writeErr(w, http.StatusInternalServerError, "could not load settings")
 		return
 	}
@@ -172,6 +176,7 @@ func (h *SettingsHandler) put(w http.ResponseWriter, r *http.Request) {
 		AccountsBase: req.AccountsBase, CalendarBase: req.CalendarBase,
 		Scopes: req.Scopes, DirectoryUsersURL: req.DirectoryUsersURL,
 	}); err != nil {
+		log.Printf("settings putZoho org=%d: %v", p.OrgID, err)
 		writeErr(w, http.StatusInternalServerError, "could not save settings")
 		return
 	}
