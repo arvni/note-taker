@@ -189,6 +189,25 @@ func (r *Repo) ListMappings(ctx context.Context, employeeID int64) ([]MappingVie
 
 // SaveRecording links a Fathom recording back to the matching meeting(s) by
 // meeting_url (spec §42-43). Returns the number of mappings updated.
+// LinkRecordingIfAbsent links a Fathom recording to a synced meeting only when
+// no recording is linked yet. It is the idempotent path used by the polling
+// backup (spec §42): re-polling never overwrites a webhook-delivered link or
+// churns updated_at. Returns rows affected (1 = newly linked, 0 = already
+// linked or no matching synced meeting).
+func (r *Repo) LinkRecordingIfAbsent(ctx context.Context, meetingURL, recordingID, recordingURL string, hasTranscript, hasSummary bool) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE event_mappings
+		SET fathom_recording_id = $2, fathom_recording_url = $3,
+		    fathom_has_transcript = $4, fathom_has_summary = $5,
+		    fathom_recorded_at = now(), updated_at = now()
+		WHERE meeting_url = $1 AND fathom_recording_id IS NULL`,
+		meetingURL, recordingID, recordingURL, hasTranscript, hasSummary)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *Repo) SaveRecording(ctx context.Context, meetingURL, recordingID, recordingURL string, hasTranscript, hasSummary bool) (int64, error) {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE event_mappings

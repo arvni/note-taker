@@ -49,6 +49,7 @@ type Config struct {
 	FathomAPIBase       string
 	FathomAPIKey        string
 	FathomWebhookSecret string
+	FathomPollInterval  time.Duration
 
 	SessionKey string
 	SessionTTL time.Duration
@@ -137,6 +138,7 @@ func Load() (*Config, error) {
 		FathomAPIBase:       env("FATHOM_API_BASE", "https://api.fathom.ai/external/v1"),
 		FathomAPIKey:        env("FATHOM_API_KEY", ""),
 		FathomWebhookSecret: env("FATHOM_WEBHOOK_SECRET", ""),
+		FathomPollInterval:  dur("FATHOM_POLL_INTERVAL", 15*time.Minute),
 
 		SessionKey: env("SESSION_KEY", ""),
 		SessionTTL: dur("SESSION_TTL", 30*time.Minute),

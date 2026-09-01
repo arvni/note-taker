@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/crypto"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/directory"
+	"github.com/arvinizadi/fathom/internal/fathom"
 	"github.com/arvinizadi/fathom/internal/google"
 	"github.com/arvinizadi/fathom/internal/oauth"
 	"github.com/arvinizadi/fathom/internal/onboarding"
@@ -186,11 +188,57 @@ func main() {
 		log.Print("worker: directory auto-sync disabled (CSV import mode); set ZOHO_DIRECTORY_USERS_URL + ZOHO_DIRECTORY_REFRESH_TOKEN to enable")
 	}
 
+	// Fathom polling backup (spec §42): the webhook is primary, but if one is
+	// missed (delivery failure, downtime) this periodically pulls recorded
+	// meetings from the Fathom API and links any that aren't linked yet. Keyed
+	// per admin org (stored settings -> env fallback); disabled when no key or
+	// interval <= 0.
+	if cfg.FathomPollInterval > 0 {
+		appSettings := tokens.NewAppSettingsStore(pool, cipher)
+		go directory.RunPeriodic(ctx, cfg.FathomPollInterval, func(ctx context.Context) error {
+			return pollFathomRecordings(ctx, appSettings, cfg, calRepo)
+		})
+		log.Printf("worker: Fathom polling backup enabled (interval=%s)", cfg.FathomPollInterval)
+	}
+
 	directory.RunPeriodic(ctx, cfg.DirectorySyncInterval, func(ctx context.Context) error {
 		return syncAllEmployees(ctx, empRepo, engine)
 	})
 
 	log.Print("worker stopped")
+}
+
+// pollFathomRecordings pulls recent recorded meetings from the Fathom API and
+// links any to their synced calendar meeting that the webhook didn't already
+// link (idempotent via LinkRecordingIfAbsent). It is a backup, not the primary
+// path — the webhook delivers in real time (spec §42).
+func pollFathomRecordings(ctx context.Context, appSettings *tokens.AppSettingsStore, cfg *config.Config, calRepo *calendar.Repo) error {
+	key := wire.FathomAPIKey(ctx, appSettings, db.OrgID(cfg.AdminOrgID), cfg.FathomAPIKey)
+	if key == "" {
+		return nil // no Fathom key configured yet
+	}
+	client := fathom.NewClient(cfg.FathomAPIBase, key)
+	meetings, err := client.ListMeetings(ctx, url.Values{})
+	if err != nil {
+		return err
+	}
+	linked := 0
+	for _, m := range meetings {
+		if m.MeetingURL == "" {
+			continue
+		}
+		// Presence in the list means Fathom recorded it; link if not already.
+		n, err := calRepo.LinkRecordingIfAbsent(ctx, m.MeetingURL, m.ID, m.RecordingURL, false, false)
+		if err != nil {
+			log.Printf("fathom poll: link %s: %v", m.MeetingURL, err)
+			continue
+		}
+		linked += int(n)
+	}
+	if linked > 0 {
+		log.Printf("fathom poll: linked %d recording(s) the webhook missed (scanned %d)", linked, len(meetings))
+	}
+	return nil
 }
 
 // syncAllEmployees runs the sync engine for every authorized employee, isolating
