@@ -232,7 +232,7 @@ func serve(cfg *config.Config) {
 	})
 	oauthHandler.Register(mux)
 	httpx.NewAPIHandler(revoker, apiRL.Wrap).Register(mux)
-	httpx.NewFathomHandler(calRepo, auditLog).Register(mux)
+	httpx.NewFathomHandler(calRepo, auditLog, cfg.FathomWebhookSecret).Register(mux)
 
 	// Sessions, auth middleware, dashboards, and the OIDC login seam (spec §38-41,
 	// §46-47). Admin SSO is wired via a company-specific IdentityProvider.

@@ -40,7 +40,7 @@ func TestFathomWebhook_ConfirmsRecordingChain(t *testing.T) {
 	})
 
 	repo := calendar.NewRepo(pool)
-	h := NewFathomHandler(repo, audit.New(audit.NewPostgresSink(pool)))
+	h := NewFathomHandler(repo, audit.New(audit.NewPostgresSink(pool)), "")
 	mux := http.NewServeMux()
 	h.Register(mux)
 

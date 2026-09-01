@@ -46,8 +46,9 @@ type Config struct {
 	GoogleOAuthClientSecret string
 	GoogleOAuthRedirectURL  string
 
-	FathomAPIBase string
-	FathomAPIKey  string
+	FathomAPIBase       string
+	FathomAPIKey        string
+	FathomWebhookSecret string
 
 	SessionKey string
 	SessionTTL time.Duration
@@ -133,8 +134,9 @@ func Load() (*Config, error) {
 		GoogleOAuthClientSecret: env("GOOGLE_OAUTH_CLIENT_SECRET", ""),
 		GoogleOAuthRedirectURL:  env("GOOGLE_OAUTH_REDIRECT_URL", ""),
 
-		FathomAPIBase: env("FATHOM_API_BASE", "https://api.fathom.ai/external/v1"),
-		FathomAPIKey:  env("FATHOM_API_KEY", ""),
+		FathomAPIBase:       env("FATHOM_API_BASE", "https://api.fathom.ai/external/v1"),
+		FathomAPIKey:        env("FATHOM_API_KEY", ""),
+		FathomWebhookSecret: env("FATHOM_WEBHOOK_SECRET", ""),
 
 		SessionKey: env("SESSION_KEY", ""),
 		SessionTTL: dur("SESSION_TTL", 30*time.Minute),

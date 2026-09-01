@@ -25,10 +25,11 @@ type RecordingMatcher interface {
 type FathomHandler struct {
 	matcher RecordingMatcher
 	audit   *audit.Logger
+	secret  string // Fathom webhook signing secret (whsec_...); verifies authenticity
 }
 
-func NewFathomHandler(matcher RecordingMatcher, auditLog *audit.Logger) *FathomHandler {
-	return &FathomHandler{matcher: matcher, audit: auditLog}
+func NewFathomHandler(matcher RecordingMatcher, auditLog *audit.Logger, secret string) *FathomHandler {
+	return &FathomHandler{matcher: matcher, audit: auditLog, secret: secret}
 }
 
 func (h *FathomHandler) Register(mux *http.ServeMux) {
@@ -40,6 +41,15 @@ func (h *FathomHandler) receive(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
+	}
+	// Verify the signature when a signing secret is configured (spec §38): reject
+	// forged webhooks. Unset secret keeps the endpoint open (dev/back-compat).
+	if h.secret != "" {
+		if err := fathom.VerifyWebhook(h.secret, r.Header, body); err != nil {
+			log.Printf("fathom webhook: signature rejected: %v", err)
+			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
 	}
 	payload, err := fathom.ParseWebhook(body)
 	if err != nil {
