@@ -22,6 +22,7 @@ export function App() {
   const [importing, setImporting] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [toast, setToast] = useState("");
+  const [invitingId, setInvitingId] = useState<number | null>(null);
   const [view, setView] = useState<"employees" | "calendar" | "settings">("employees");
 
   async function load() {
@@ -47,8 +48,10 @@ export function App() {
     try { await api.revoke(e.ID); await load(); } catch (er: any) { setErr(er.message); }
   }
   async function invite(e: Employee) {
-    try { await api.invite(e.ID); setToast(`Invitation sent to ${e.Email}`); await load(); }
+    setErr(""); setInvitingId(e.ID);
+    try { await api.invite(e.ID); setToast(`✓ Invitation sent to ${e.Email}`); await load(); }
     catch (er: any) { setErr(er.message); }
+    finally { setInvitingId(null); }
   }
 
   return (
@@ -108,8 +111,10 @@ export function App() {
                     <td className="actions" onClick={(ev) => ev.stopPropagation()}>
                       {e.OnboardingStatus === "authorized"
                         ? <button className="btn small danger" onClick={() => revoke(e)}>Revoke</button>
-                        : <button className="btn small primary" onClick={() => invite(e)}>
-                            {["invited", "opened"].includes(e.OnboardingStatus) ? "Resend" : "Invite"}
+                        : <button className="btn small primary" disabled={invitingId === e.ID} onClick={() => invite(e)}>
+                            {invitingId === e.ID
+                              ? <span className="spin">⏳ Sending…</span>
+                              : (["invited", "opened"].includes(e.OnboardingStatus) ? "Resend" : "Invite")}
                           </button>}
                     </td>
                   </tr>
@@ -395,6 +400,7 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
   const [d, setD] = useState<EmployeeDetail | null>(null);
   const [err, setErr] = useState("");
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
   const [editing, setEditing] = useState(false);
   const [en, setEn] = useState("");
   const [ee, setEe] = useState("");
@@ -436,9 +442,11 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
           <div className="drawer-actions">
             {d && !editing && <button className="btn small" onClick={() => setEditing(true)}>Edit</button>}
             {d && d.employee.onboarding_status !== "authorized" &&
-              <button className="btn small primary" disabled={sent} onClick={async () => {
+              <button className="btn small primary" disabled={sent || sending} onClick={async () => {
+                setErr(""); setSending(true);
                 try { await api.invite(d.employee.id); setSent(true); } catch (e: any) { setErr(e.message); }
-              }}>{sent ? "Invitation sent ✓" : (["invited","opened"].includes(d.employee.onboarding_status) ? "Resend invitation" : "Send invitation")}</button>}
+                finally { setSending(false); }
+              }}>{sending ? "⏳ Sending…" : sent ? "Invitation sent ✓" : (["invited","opened"].includes(d.employee.onboarding_status) ? "Resend invitation" : "Send invitation")}</button>}
             <button className="link" onClick={onClose}>Close ✕</button>
           </div>
         </header>

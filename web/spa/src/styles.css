@@ -121,3 +121,6 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--brand) 6%, transpar
 .fathom-bar.ok { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
 .fathom-bar code { font-size:12px; }
 .rec { display:flex; align-items:center; gap:6px; }
+
+.spin { display: inline-block; animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
