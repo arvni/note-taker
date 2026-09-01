@@ -90,17 +90,24 @@ func (c *Client) GetTranscript(ctx context.Context, recordingID string) (*Transc
 // WebhookSpec configures a webhook subscription (spec §43). At least one of the
 // include_* flags must be true, per Fathom's documentation.
 type WebhookSpec struct {
-	DestinationURL     string `json:"destination_url"`
-	IncludeTranscript  bool   `json:"include_transcript,omitempty"`
-	IncludeSummary     bool   `json:"include_summary,omitempty"`
-	IncludeActionItems bool   `json:"include_action_items,omitempty"`
-	IncludeCRMMatches  bool   `json:"include_crm_matches,omitempty"`
+	DestinationURL string `json:"destination_url"`
+	// TriggeredFor selects which recordings fire the webhook. Valid values
+	// (Fathom external API): my_recordings, my_shared_with_team_recordings,
+	// shared_external_recordings. At least one is required.
+	TriggeredFor       []string `json:"triggered_for"`
+	IncludeTranscript  bool     `json:"include_transcript,omitempty"`
+	IncludeSummary     bool     `json:"include_summary,omitempty"`
+	IncludeActionItems bool     `json:"include_action_items,omitempty"`
+	IncludeCRMMatches  bool     `json:"include_crm_matches,omitempty"`
 }
 
 // CreateWebhook subscribes to new meeting content and returns the webhook id.
 func (c *Client) CreateWebhook(ctx context.Context, spec WebhookSpec) (string, error) {
 	if spec.DestinationURL == "" {
 		return "", fmt.Errorf("fathom: webhook destination_url required")
+	}
+	if len(spec.TriggeredFor) == 0 {
+		return "", fmt.Errorf("fathom: at least one triggered_for option is required")
 	}
 	if !spec.IncludeTranscript && !spec.IncludeSummary && !spec.IncludeActionItems && !spec.IncludeCRMMatches {
 		return "", fmt.Errorf("fathom: at least one include_* flag must be set")
@@ -143,7 +150,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("X-Api-Key", c.apiKey)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

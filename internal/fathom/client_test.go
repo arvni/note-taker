@@ -11,7 +11,7 @@ import (
 func TestFathomClient(t *testing.T) {
 	var createdSpec WebhookSpec
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer key123" {
+		if r.Header.Get("X-Api-Key") != "key123" {
 			w.WriteHeader(401)
 			return
 		}
@@ -44,11 +44,11 @@ func TestFathomClient(t *testing.T) {
 		t.Fatalf("transcript: %v %+v", err, tr)
 	}
 
-	id, err := c.CreateWebhook(ctx, WebhookSpec{DestinationURL: "https://app/webhooks/fathom", IncludeTranscript: true})
+	id, err := c.CreateWebhook(ctx, WebhookSpec{DestinationURL: "https://app/webhooks/fathom", TriggeredFor: []string{"my_recordings"}, IncludeTranscript: true})
 	if err != nil || id != "wh1" {
 		t.Fatalf("create webhook: %v id=%s", err, id)
 	}
-	if createdSpec.DestinationURL == "" || !createdSpec.IncludeTranscript {
+	if createdSpec.DestinationURL == "" || !createdSpec.IncludeTranscript || len(createdSpec.TriggeredFor) == 0 {
 		t.Fatalf("webhook spec not sent correctly: %+v", createdSpec)
 	}
 	if err := c.DeleteWebhook(ctx, "wh1"); err != nil {
@@ -58,7 +58,7 @@ func TestFathomClient(t *testing.T) {
 
 func TestCreateWebhook_RequiresInclude(t *testing.T) {
 	c := NewClient("https://example", "k")
-	if _, err := c.CreateWebhook(context.Background(), WebhookSpec{DestinationURL: "https://x"}); err == nil {
+	if _, err := c.CreateWebhook(context.Background(), WebhookSpec{DestinationURL: "https://x", TriggeredFor: []string{"my_recordings"}}); err == nil {
 		t.Fatal("expected error when no include_* flag is set")
 	}
 }

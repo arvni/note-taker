@@ -64,7 +64,9 @@ func (h *FathomAdminHandler) register(w http.ResponseWriter, r *http.Request) {
 	}
 	client := fathom.NewClient(h.apiBase, key)
 	id, err := client.CreateWebhook(r.Context(), fathom.WebhookSpec{
-		DestinationURL: h.destURL(), IncludeTranscript: true, IncludeSummary: true, IncludeActionItems: true,
+		DestinationURL:    h.destURL(),
+		TriggeredFor:      []string{"my_recordings", "my_shared_with_team_recordings", "shared_external_recordings"},
+		IncludeTranscript: true, IncludeSummary: true, IncludeActionItems: true,
 	})
 	if err != nil {
 		log.Printf("fathom register: %v", err)
