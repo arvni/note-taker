@@ -131,6 +131,17 @@ func (r *Repo) UpdateEmail(ctx context.Context, org db.OrgID, id int64, email st
 	return err
 }
 
+// UpdateNameEmail edits an employee's display name and email from the admin UI.
+// The (organization_id, email) unique constraint surfaces a duplicate email as
+// an error the handler maps to a 409.
+func (r *Repo) UpdateNameEmail(ctx context.Context, org db.OrgID, id int64, name, email string) error {
+	t := r.pool.Tenant(org)
+	_, err := t.Exec(ctx, `
+		UPDATE employees SET name = $1, email = $2, updated_at = now()
+		WHERE organization_id = $3 AND id = $4`, name, email, org, id)
+	return err
+}
+
 // GetByID returns the employee by id within the org.
 func (r *Repo) GetByID(ctx context.Context, org db.OrgID, id int64) (*Employee, error) {
 	t := r.pool.Tenant(org)

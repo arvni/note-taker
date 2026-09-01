@@ -395,7 +395,20 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
   const [d, setD] = useState<EmployeeDetail | null>(null);
   const [err, setErr] = useState("");
   const [sent, setSent] = useState(false);
-  useEffect(() => { api.detail(id).then(setD).catch((e) => setErr(e.message)); }, [id]);
+  const [editing, setEditing] = useState(false);
+  const [en, setEn] = useState("");
+  const [ee, setEe] = useState("");
+  const [saveMsg, setSaveMsg] = useState("");
+  useEffect(() => { api.detail(id).then((x) => { setD(x); setEn(x.employee.name); setEe(x.employee.email); }).catch((e) => setErr(e.message)); }, [id]);
+
+  async function saveProfile() {
+    setErr(""); setSaveMsg("");
+    try {
+      await api.updateEmployee(id, { name: en, email: ee });
+      const x = await api.detail(id); setD(x); setEn(x.employee.name); setEe(x.employee.email);
+      setEditing(false); setSaveMsg("Saved.");
+    } catch (e: any) { setErr(e.message); }
+  }
 
   const fmt = (t: string | null) => t ? new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—";
 
@@ -404,10 +417,24 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
         <header className="drawer-head">
           <div>
-            <h3>{d?.employee.email || "…"}</h3>
-            {d?.employee.name && <div className="muted">{d.employee.name}{d.employee.department ? ` · ${d.employee.department}` : ""}</div>}
+            {editing ? (
+              <div className="edit-profile">
+                <label className="field"><span>Name</span><input value={en} onChange={(e) => setEn(e.target.value)} placeholder="Full name" /></label>
+                <label className="field"><span>Email</span><input value={ee} onChange={(e) => setEe(e.target.value)} placeholder="name@company.com" /></label>
+                <div className="drawer-actions">
+                  <button className="btn small primary" onClick={saveProfile}>Save</button>
+                  <button className="link" onClick={() => { setEditing(false); if (d) { setEn(d.employee.name); setEe(d.employee.email); } }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h3>{d?.employee.email || "…"}</h3>
+                {d?.employee.name && <div className="muted">{d.employee.name}{d.employee.department ? ` · ${d.employee.department}` : ""}</div>}
+              </>
+            )}
           </div>
           <div className="drawer-actions">
+            {d && !editing && <button className="btn small" onClick={() => setEditing(true)}>Edit</button>}
             {d && d.employee.onboarding_status !== "authorized" &&
               <button className="btn small primary" disabled={sent} onClick={async () => {
                 try { await api.invite(d.employee.id); setSent(true); } catch (e: any) { setErr(e.message); }
@@ -416,6 +443,7 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
           </div>
         </header>
         {err && <div className="banner bad">{err}</div>}
+        {saveMsg && <div className="banner" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>{saveMsg}</div>}
 
         <h4>Calendars</h4>
         {d && d.calendars.length === 0 && <p className="muted">No calendars discovered yet.</p>}

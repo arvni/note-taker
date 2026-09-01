@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/db"
@@ -19,6 +20,7 @@ type StatsProvider interface {
 	Stats(ctx context.Context, org db.OrgID) (directory.OrgStats, error)
 	EmployeeRows(ctx context.Context, org db.OrgID) ([]directory.EmployeeRow, error)
 	GetByID(ctx context.Context, org db.OrgID, id int64) (*directory.Employee, error)
+	UpdateNameEmail(ctx context.Context, org db.OrgID, id int64, name, email string) error
 }
 
 // CalendarView exposes an employee's calendars + synced meetings for the detail
@@ -58,6 +60,40 @@ func (a *APIv1) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/employees/import", a.auth.RequirePerm(rbac.ManageEmployees, a.importCSV))
 	mux.HandleFunc("POST /api/v1/employees/{id}/revoke", a.auth.RequirePerm(rbac.ManageEmployees, a.revoke))
 	mux.HandleFunc("POST /api/v1/employees/{id}/invite", a.auth.RequirePerm(rbac.ManageEmployees, a.invite))
+	mux.HandleFunc("PATCH /api/v1/employees/{id}", a.auth.RequirePerm(rbac.ManageEmployees, a.updateEmployee))
+}
+
+func (a *APIv1) updateEmployee(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Email = strings.TrimSpace(req.Email)
+	if !strings.Contains(req.Email, "@") {
+		writeErr(w, http.StatusBadRequest, "a valid email is required")
+		return
+	}
+	if err := a.stats.UpdateNameEmail(r.Context(), db.OrgID(p.OrgID), id, req.Name, req.Email); err != nil {
+		if strings.Contains(err.Error(), "employees_organization_id_email_key") {
+			writeErr(w, http.StatusConflict, "another employee already uses that email")
+			return
+		}
+		log.Printf("apiv1 updateEmployee id=%d: %v", id, err)
+		writeErr(w, http.StatusInternalServerError, "could not update employee")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "name": req.Name, "email": req.Email})
 }
 
 func (a *APIv1) me(w http.ResponseWriter, r *http.Request) {

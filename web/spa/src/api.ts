@@ -62,6 +62,9 @@ export const api = {
     return req(`/api/v1/employees/${id}/revoke`, { method: "POST" });
   },
   detail(id: number): Promise<EmployeeDetail> { return req<EmployeeDetail>(`/api/v1/employees/${id}`); },
+  updateEmployee(id: number, body: { name: string; email: string }): Promise<{ ok: boolean; name: string; email: string }> {
+    return req(`/api/v1/employees/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  },
   invite(id: number): Promise<{ ok: boolean }> { return req(`/api/v1/employees/${id}/invite`, { method: "POST" }); },
   destStatus(): Promise<{ connected: boolean; calendar_id: string; connected_email: string; connect_url: string }> { return req("/api/v1/destination/status"); },
   destEvents(): Promise<{ connected: boolean; calendar_id: string; events: DestEvent[] }> { return req("/api/v1/destination/events"); },
