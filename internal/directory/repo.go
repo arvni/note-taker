@@ -142,6 +142,19 @@ func (r *Repo) UpdateNameEmail(ctx context.Context, org db.OrgID, id int64, name
 	return err
 }
 
+// LastInvitedAt returns when the most recent onboarding invitation was sent to
+// the employee (the latest onboarding_tokens.created_at), or nil if never
+// invited. Used by the admin UI to show "last invited" (spec §44).
+func (r *Repo) LastInvitedAt(ctx context.Context, org db.OrgID, id int64) (*time.Time, error) {
+	var t *time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT max(created_at) FROM onboarding_tokens WHERE employee_id = $1`, id).Scan(&t)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // GetByID returns the employee by id within the org.
 func (r *Repo) GetByID(ctx context.Context, org db.OrgID, id int64) (*Employee, error) {
 	t := r.pool.Tenant(org)

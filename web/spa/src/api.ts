@@ -14,7 +14,7 @@ export interface Meeting {
   recording_url: string; has_transcript: boolean; has_summary: boolean; recorded_at: string | null;
 }
 export interface EmployeeDetail {
-  employee: { id: number; email: string; name: string; department: string; onboarding_status: string };
+  employee: { id: number; email: string; name: string; department: string; onboarding_status: string; invited_at: string | null };
   calendars: Calendar[]; meetings: Meeting[];
 }
 export interface DestEvent {

@@ -436,6 +436,7 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
               <>
                 <h3>{d?.employee.email || "…"}</h3>
                 {d?.employee.name && <div className="muted">{d.employee.name}{d.employee.department ? ` · ${d.employee.department}` : ""}</div>}
+                {d && <div className="muted" style={{ marginTop: 2 }}>Last invited: {d.employee.invited_at ? fmt(d.employee.invited_at) : "never"}</div>}
               </>
             )}
           </div>
@@ -444,7 +445,7 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
             {d && d.employee.onboarding_status !== "authorized" &&
               <button className="btn small primary" disabled={sent || sending} onClick={async () => {
                 setErr(""); setSending(true);
-                try { await api.invite(d.employee.id); setSent(true); } catch (e: any) { setErr(e.message); }
+                try { await api.invite(d.employee.id); setSent(true); setD(await api.detail(d.employee.id)); } catch (e: any) { setErr(e.message); }
                 finally { setSending(false); }
               }}>{sending ? "⏳ Sending…" : sent ? "Invitation sent ✓" : (["invited","opened"].includes(d.employee.onboarding_status) ? "Resend invitation" : "Send invitation")}</button>}
             <button className="link" onClick={onClose}>Close ✕</button>

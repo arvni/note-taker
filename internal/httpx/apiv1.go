@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/db"
@@ -21,6 +22,7 @@ type StatsProvider interface {
 	EmployeeRows(ctx context.Context, org db.OrgID) ([]directory.EmployeeRow, error)
 	GetByID(ctx context.Context, org db.OrgID, id int64) (*directory.Employee, error)
 	UpdateNameEmail(ctx context.Context, org db.OrgID, id int64, name, email string) error
+	LastInvitedAt(ctx context.Context, org db.OrgID, id int64) (*time.Time, error)
 }
 
 // CalendarView exposes an employee's calendars + synced meetings for the detail
@@ -214,10 +216,12 @@ func (a *APIv1) employeeDetail(w http.ResponseWriter, r *http.Request) {
 	if cals == nil {
 		cals = []calendar.StoredCalendar{}
 	}
+	invitedAt, _ := a.stats.LastInvitedAt(r.Context(), db.OrgID(p.OrgID), id)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"employee": map[string]any{
 			"id": emp.ID, "email": emp.Email, "name": emp.Name,
 			"department": emp.Department, "onboarding_status": emp.OnboardingStatus,
+			"invited_at": invitedAt,
 		},
 		"calendars": cals, "meetings": meetings,
 	})
