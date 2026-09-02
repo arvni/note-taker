@@ -237,14 +237,14 @@ function AppSettingsCard() {
 
       <h4>Email server (SMTP)</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>Used to send onboarding invitations. Leave blank to only log emails (dev).</p>
-      <div className="field-row"><Field k="smtp_host" label="SMTP host" ph="smtp.zoho.com" /><Field k="smtp_port" label="Port" ph="587" /></div>
-      <div className="field-row"><Field k="smtp_user" label="Username" /><label className="field"><span>Password {a?.has_smtp_pass && <em className="muted">(set)</em>}</span><input type="password" value={f.smtp_pass ?? ""} onChange={on("smtp_pass")} placeholder={a?.has_smtp_pass ? "••••••••" : ""} /></label></div>
-      <Field k="email_from" label="From address" ph="calendar-integration@company.com" />
+      <div className="field-row">{Field({ k: "smtp_host", label: "SMTP host", ph: "smtp.zoho.com" })}{Field({ k: "smtp_port", label: "Port", ph: "587" })}</div>
+      <div className="field-row">{Field({ k: "smtp_user", label: "Username" })}<label className="field"><span>Password {a?.has_smtp_pass && <em className="muted">(set)</em>}</span><input type="password" value={f.smtp_pass ?? ""} onChange={on("smtp_pass")} placeholder={a?.has_smtp_pass ? "••••••••" : ""} /></label></div>
+      {Field({ k: "email_from", label: "From address", ph: "calendar-integration@company.com" })}
 
       <h4>Branding</h4>
-      <div className="field-row"><Field k="company_name" label="Company name" ph="Your Company" /><Field k="app_name" label="App name" ph="Calendar Bridge" /></div>
-      <Field k="support_addr" label="Support email" ph="support@company.com" />
-      <div className="field-row"><Field k="privacy_url" label="Privacy URL" /><Field k="terms_url" label="Terms URL" /></div>
+      <div className="field-row">{Field({ k: "company_name", label: "Company name", ph: "Your Company" })}{Field({ k: "app_name", label: "App name", ph: "Calendar Bridge" })}</div>
+      {Field({ k: "support_addr", label: "Support email", ph: "support@company.com" })}
+      <div className="field-row">{Field({ k: "privacy_url", label: "Privacy URL" })}{Field({ k: "terms_url", label: "Terms URL" })}</div>
 
       <h4>Fathom</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>API key to register the recording webhook (Fathom Calendar tab).</p>
@@ -252,12 +252,12 @@ function AppSettingsCard() {
 
       <h4>Sync</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>How often calendars are pulled from Zoho and pushed to the Fathom calendar (e.g. 5m, 15m, 1h; min 1m). Blank = default.</p>
-      <Field k="sync_interval" label="Sync interval" ph="5m" />
+      {Field({ k: "sync_interval", label: "Sync interval", ph: "5m" })}
 
       <h4>Google Calendar (destination)</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>OAuth client for the “Connect Google Calendar” button (Fathom Calendar tab). Create it in Google Cloud Console → Credentials.</p>
       <div className="field-row">
-        <Field k="google_oauth_client_id" label="Client ID" ph="…apps.googleusercontent.com" />
+        {Field({ k: "google_oauth_client_id", label: "Client ID", ph: "…apps.googleusercontent.com" })}
         <label className="field"><span>Client secret {a?.has_google_secret && <em className="muted">(set)</em>}</span><input type="password" value={f.google_oauth_client_secret ?? ""} onChange={on("google_oauth_client_secret")} placeholder={a?.has_google_secret ? "••••••••" : ""} /></label>
       </div>
       {a?.google_redirect_uri && <p className="muted" style={{ margin: "2px 0 0" }}>Register this redirect URI in Google Cloud Console:<br /><code>{a.google_redirect_uri}</code></p>}
