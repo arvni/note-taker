@@ -12,6 +12,7 @@ export interface Meeting {
   source_event_id: string; title: string; starts_at: string | null; ends_at: string | null;
   meeting_provider: string; meeting_url: string; synced: boolean; cancelled: boolean;
   recording_url: string; has_transcript: boolean; has_summary: boolean; recorded_at: string | null;
+  shared_with?: string[];
 }
 export interface EmployeeDetail {
   employee: { id: number; email: string; name: string; department: string; onboarding_status: string; invited_at: string | null };
@@ -20,6 +21,7 @@ export interface EmployeeDetail {
 export interface DestEvent {
   id: string; summary: string; location: string; description: string;
   htmlLink: string; status: string; start: { dateTime?: string }; end: { dateTime?: string };
+  source_emails?: string[];
 }
 export interface ZohoSettings {
   configured: boolean; client_id: string; has_secret: boolean;

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -157,21 +158,28 @@ type MappingView struct {
 	HasTranscript      bool       `json:"has_transcript"`
 	HasSummary         bool       `json:"has_summary"`
 	RecordedAt         *time.Time `json:"recorded_at"`
+	SharedWith         []string   `json:"shared_with"` // other attendees' emails for this same meeting
 }
 
 // ListMappings returns an employee's meeting mappings, newest first, for the
 // admin detail view.
-func (r *Repo) ListMappings(ctx context.Context, employeeID int64) ([]MappingView, error) {
+func (r *Repo) ListMappings(ctx context.Context, org db.OrgID, employeeID int64) ([]MappingView, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT source_event_id, calendar_uid, coalesce(title,''), starts_at, ends_at,
-		       coalesce(meeting_provider,''), coalesce(meeting_url,''),
-		       coalesce(destination_event_id,''), (destination_event_id IS NOT NULL),
-		       (cancelled_at IS NOT NULL), coalesce(fathom_recording_url,''),
-		       fathom_has_transcript, fathom_has_summary, fathom_recorded_at
-		FROM event_mappings
-		WHERE employee_id = $1
-		ORDER BY starts_at DESC NULLS LAST
-		LIMIT 200`, employeeID)
+		SELECT m.source_event_id, m.calendar_uid, coalesce(m.title,''), m.starts_at, m.ends_at,
+		       coalesce(m.meeting_provider,''), coalesce(m.meeting_url,''),
+		       coalesce(m.destination_event_id,''), (m.destination_event_id IS NOT NULL),
+		       (m.cancelled_at IS NOT NULL), coalesce(m.fathom_recording_url,''),
+		       m.fathom_has_transcript, m.fathom_has_summary, m.fathom_recorded_at,
+		       coalesce((SELECT array_agg(e2.email ORDER BY e2.email)
+		                 FROM event_mappings m2 JOIN employees e2 ON e2.id = m2.employee_id
+		                 WHERE m2.source_event_id = m.source_event_id
+		                   AND m2.employee_id <> m.employee_id
+		                   AND m2.cancelled_at IS NULL
+		                   AND e2.organization_id = $2), '{}') AS shared_with
+		FROM event_mappings m
+		WHERE m.employee_id = $1
+		ORDER BY m.starts_at DESC NULLS LAST
+		LIMIT 200`, employeeID, org)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +189,7 @@ func (r *Repo) ListMappings(ctx context.Context, employeeID int64) ([]MappingVie
 		var m MappingView
 		if err := rows.Scan(&m.SourceEventID, &m.CalendarUID, &m.Title, &m.StartsAt, &m.EndsAt,
 			&m.MeetingProvider, &m.MeetingURL, &m.DestinationEventID, &m.Synced, &m.Cancelled,
-			&m.RecordingURL, &m.HasTranscript, &m.HasSummary, &m.RecordedAt); err != nil {
+			&m.RecordingURL, &m.HasTranscript, &m.HasSummary, &m.RecordedAt, &m.SharedWith); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -221,4 +229,85 @@ func (r *Repo) SaveRecording(ctx context.Context, meetingURL, recordingID, recor
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// SharedDestinationEventID returns a destination event already synced for the
+// same source event by another attendee, so co-attendees reuse one event
+// instead of duplicating it on the Fathom calendar (spec §42).
+func (r *Repo) SharedDestinationEventID(ctx context.Context, sourceEventID string) (string, bool, error) {
+	var id string
+	err := r.pool.QueryRow(ctx, `
+		SELECT destination_event_id FROM event_mappings
+		WHERE source_event_id = $1 AND destination_event_id IS NOT NULL AND cancelled_at IS NULL
+		LIMIT 1`, sourceEventID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}
+
+// DestinationShared reports whether another active mapping still references the
+// same destination event (a co-attendee), so cancelling one attendee must not
+// delete the shared event.
+func (r *Repo) DestinationShared(ctx context.Context, destEventID string, excludeMappingID int64) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM event_mappings
+			WHERE destination_event_id = $1 AND id <> $2 AND cancelled_at IS NULL)`,
+		destEventID, excludeMappingID).Scan(&exists)
+	return exists, err
+}
+
+// SourceAttendees maps each destination event id to the source employees' emails
+// (active mappings), for attribution in the calendar view (spec §42).
+func (r *Repo) SourceAttendees(ctx context.Context, org db.OrgID, destEventIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(destEventIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.destination_event_id, e.email
+		FROM event_mappings m JOIN employees e ON e.id = m.employee_id
+		WHERE m.destination_event_id = ANY($1) AND m.cancelled_at IS NULL
+		  AND e.organization_id = $2
+		ORDER BY e.email`, destEventIDs, org)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], email)
+	}
+	return out, rows.Err()
+}
+
+// ActiveDestinationEventIDs returns the set of destination event ids still
+// referenced by a non-cancelled mapping in the org. Used by prune-orphans to
+// delete destination events no mapping points to any more (e.g. after dedup).
+func (r *Repo) ActiveDestinationEventIDs(ctx context.Context, org db.OrgID) (map[string]bool, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT m.destination_event_id
+		FROM event_mappings m JOIN employees e ON e.id = m.employee_id
+		WHERE e.organization_id = $1 AND m.destination_event_id IS NOT NULL
+		  AND m.cancelled_at IS NULL`, org)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }

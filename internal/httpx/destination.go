@@ -33,12 +33,13 @@ type DestinationResolver func(ctx context.Context, org db.OrgID) Destination
 // DestinationHandler exposes the Fathom-watched calendar: status, list, and
 // manual add. Behind admin auth + CSRF; requires ManageCalendars.
 type DestinationHandler struct {
-	resolve DestinationResolver
-	auth    *AuthMiddleware
+	resolve   DestinationResolver
+	attendees func(ctx context.Context, org db.OrgID, destEventIDs []string) (map[string][]string, error)
+	auth      *AuthMiddleware
 }
 
-func NewDestinationHandler(resolve DestinationResolver, auth *AuthMiddleware) *DestinationHandler {
-	return &DestinationHandler{resolve: resolve, auth: auth}
+func NewDestinationHandler(resolve DestinationResolver, attendees func(ctx context.Context, org db.OrgID, destEventIDs []string) (map[string][]string, error), auth *AuthMiddleware) *DestinationHandler {
+	return &DestinationHandler{resolve: resolve, attendees: attendees, auth: auth}
 }
 
 func (h *DestinationHandler) Register(mux *http.ServeMux) {
@@ -72,7 +73,27 @@ func (h *DestinationHandler) list(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []google.ListedEvent{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "calendar_id": d.CalendarID, "events": events})
+	// Attribution: attach the source employee email(s) for each event so the UI
+	// can show which user(s) a synced meeting came from (spec §42).
+	ids := make([]string, 0, len(events))
+	for _, ev := range events {
+		ids = append(ids, ev.ID)
+	}
+	emails := map[string][]string{}
+	if h.attendees != nil {
+		if m, err := h.attendees(r.Context(), db.OrgID(p.OrgID), ids); err == nil {
+			emails = m
+		}
+	}
+	enriched := make([]map[string]any, 0, len(events))
+	for _, ev := range events {
+		enriched = append(enriched, map[string]any{
+			"id": ev.ID, "summary": ev.Summary, "location": ev.Location,
+			"description": ev.Description, "htmlLink": ev.HTMLLink, "status": ev.Status,
+			"start": ev.Start, "end": ev.End, "source_emails": emails[ev.ID],
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "calendar_id": d.CalendarID, "events": enriched})
 }
 
 type createEventReq struct {

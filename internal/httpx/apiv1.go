@@ -29,7 +29,7 @@ type StatsProvider interface {
 // panel (implemented by *calendar.Repo).
 type CalendarView interface {
 	ListAllCalendars(ctx context.Context, employeeID int64) ([]calendar.StoredCalendar, error)
-	ListMappings(ctx context.Context, employeeID int64) ([]calendar.MappingView, error)
+	ListMappings(ctx context.Context, org db.OrgID, employeeID int64) ([]calendar.MappingView, error)
 }
 
 // Inviter sends (or resends) an onboarding invitation to an employee so they can
@@ -208,7 +208,7 @@ func (a *APIv1) employeeDetail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "calendars failed")
 		return
 	}
-	meetings, err := a.cals.ListMappings(r.Context(), id)
+	meetings, err := a.cals.ListMappings(r.Context(), db.OrgID(p.OrgID), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "meetings failed")
 		return

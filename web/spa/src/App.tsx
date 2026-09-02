@@ -326,18 +326,21 @@ function CalendarView() {
       {fmsg && <div className="banner" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>{fmsg}</div>}
       <section className="card">
         <table>
-          <thead><tr><th>Event</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
+          <thead><tr><th>Event</th><th>From (user)</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
           <tbody>
             {data?.events.map((e) => (
               <tr key={e.id}>
                 <td><div className="emp"><strong>{e.summary || "(untitled)"}</strong>{e.location && <a className="sub mini-link" href={e.location} target="_blank" rel="noreferrer">{e.location}</a>}</div></td>
+                <td>{e.source_emails && e.source_emails.length > 0
+                  ? <span className="src">{e.source_emails.map((m) => <span key={m} className="chip">{m}</span>)}</span>
+                  : <span className="muted">—</span>}</td>
                 <td>{fmt(e.start.dateTime)}</td>
                 <td>{fmt(e.end.dateTime)}</td>
                 <td>{e.htmlLink ? <a className="mini-link" href={e.htmlLink} target="_blank" rel="noreferrer">open ↗</a> : e.status}</td>
               </tr>
             ))}
-            {data && data.events.length === 0 && <tr><td colSpan={4} className="empty">No events in the destination calendar.</td></tr>}
-            {!data && !err && <tr><td colSpan={4} className="empty">Loading…</td></tr>}
+            {data && data.events.length === 0 && <tr><td colSpan={5} className="empty">No events in the destination calendar.</td></tr>}
+            {!data && !err && <tr><td colSpan={5} className="empty">Loading…</td></tr>}
           </tbody>
         </table>
       </section>
@@ -475,7 +478,8 @@ function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
             <tbody>
               {d.meetings.map((m) => (
                 <tr key={m.source_event_id}>
-                  <td>{m.title || "(untitled)"}<br /><a className="mini-link" href={m.meeting_url} target="_blank" rel="noreferrer">{m.meeting_url}</a></td>
+                  <td>{m.title || "(untitled)"}<br /><a className="mini-link" href={m.meeting_url} target="_blank" rel="noreferrer">{m.meeting_url}</a>
+                    {m.shared_with && m.shared_with.length > 0 && <div className="sub muted">also attended by: {m.shared_with.join(", ")}</div>}</td>
                   <td>{fmt(m.starts_at)}</td>
                   <td>{m.meeting_provider.replace("_", " ")}</td>
                   <td>{m.cancelled ? <span className="badge bad">Cancelled</span> : m.synced ? <span className="badge ok">Synced</span> : <span className="badge pending">Pending</span>}</td>

@@ -41,6 +41,8 @@ type MappingRepo interface {
 	MarkCreated(ctx context.Context, mappingID int64, destEventID string, sourceUpdatedAt *time.Time) error
 	MarkUpdated(ctx context.Context, mappingID int64, sourceUpdatedAt *time.Time) error
 	MarkCancelled(ctx context.Context, mappingID int64) error
+	SharedDestinationEventID(ctx context.Context, sourceEventID string) (string, bool, error)
+	DestinationShared(ctx context.Context, destEventID string, excludeMappingID int64) (bool, error)
 }
 
 // Engine runs the per-employee synchronization.
@@ -104,6 +106,15 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		if !ok {
 			continue // missing start/end — cannot create a valid destination event
 		}
+		// Dedup: if a co-attendee already synced this exact meeting (same source
+		// event id), reuse their destination event instead of creating a duplicate.
+		if sharedID, ok, err := e.repo.SharedDestinationEventID(ctx, m.SourceEventID); err == nil && ok {
+			if err := e.repo.MarkCreated(ctx, m.ID, sharedID, m.SourceUpdatedAt); err != nil {
+				return rep, err
+			}
+			rep.Created++
+			continue
+		}
 		id, err := dest.CreateEvent(ctx, ev)
 		if err != nil {
 			log.Printf("sync create employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
@@ -142,9 +153,17 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		return rep, err
 	}
 	for _, m := range toCancel {
-		if err := dest.DeleteEvent(ctx, m.DestinationEventID); err != nil {
-			log.Printf("sync cancel employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
+		// Only delete the destination event if no other attendee still has it.
+		shared, err := e.repo.DestinationShared(ctx, m.DestinationEventID, m.ID)
+		if err != nil {
+			log.Printf("sync cancel employee=%d src=%s: shared-check: %v", employeeID, m.SourceEventID, err)
 			continue
+		}
+		if !shared {
+			if err := dest.DeleteEvent(ctx, m.DestinationEventID); err != nil {
+				log.Printf("sync cancel employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
+				continue
+			}
 		}
 		if err := e.repo.MarkCancelled(ctx, m.ID); err != nil {
 			return rep, err

@@ -59,6 +59,10 @@ func main() {
 		runMigrate(cfg, os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "prune-orphans" {
+		runPruneOrphans(cfg)
+		return
+	}
 	serve(cfg)
 }
 
@@ -95,6 +99,66 @@ func runMigrate(cfg *config.Config, args []string) {
 	default:
 		log.Fatalf("migrate: unknown subcommand %q (want up|down)", args[0])
 	}
+}
+
+// runPruneOrphans deletes destination calendar events that no active mapping
+// references any more (e.g. leftovers after de-duplicating co-attendee events).
+func runPruneOrphans(cfg *config.Config) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("prune: db: %v", err)
+	}
+	defer pool.Close()
+	cipher, err := crypto.NewFromBase64Key(cfg.CryptoMasterKey)
+	if err != nil {
+		log.Fatalf("prune: crypto: %v", err)
+	}
+	org := db.OrgID(cfg.AdminOrgID)
+	appSettings := tokens.NewAppSettingsStore(pool, cipher)
+	destStore := tokens.NewGoogleDestStore(pool, cipher)
+	calRepo := calendar.NewRepo(pool)
+
+	d, err := destStore.Get(ctx, org)
+	if err != nil {
+		log.Fatalf("prune: no google destination for org %d: %v", org, err)
+	}
+	redirect := cfg.GoogleOAuthRedirectURL
+	if redirect == "" {
+		redirect = cfg.PublicBaseURL + "/oauth/google/callback"
+	}
+	var oc *google.OAuthClient
+	if a, err := appSettings.Get(ctx, org); err == nil && a.GoogleOAuthClientID != "" && a.GoogleOAuthClientSecret != "" {
+		oc = google.NewOAuthClient(a.GoogleOAuthClientID, a.GoogleOAuthClientSecret, redirect)
+	} else if cfg.GoogleOAuthClientID != "" {
+		oc = google.NewOAuthClient(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, redirect)
+	} else {
+		log.Fatal("prune: no Google OAuth client configured")
+	}
+	gcal := google.NewClient(cfg.GoogleCalendarBase, d.CalendarID, google.NewRefreshTokenSource(oc, d.RefreshToken))
+
+	active, err := calRepo.ActiveDestinationEventIDs(ctx, org)
+	if err != nil {
+		log.Fatalf("prune: active ids: %v", err)
+	}
+	events, err := gcal.ListEvents(ctx, time.Now().Add(-90*24*time.Hour), time.Now().Add(180*24*time.Hour))
+	if err != nil {
+		log.Fatalf("prune: list events: %v", err)
+	}
+	deleted := 0
+	for _, ev := range events {
+		if active[ev.ID] {
+			continue
+		}
+		if err := gcal.DeleteEvent(ctx, ev.ID); err != nil {
+			log.Printf("prune: delete %s (%s): %v", ev.ID, ev.Summary, err)
+			continue
+		}
+		log.Printf("prune: deleted orphan %q (%s)", ev.Summary, ev.ID)
+		deleted++
+	}
+	log.Printf("prune-orphans: scanned %d events, deleted %d orphan(s)", len(events), deleted)
 }
 
 func serve(cfg *config.Config) {
@@ -291,7 +355,7 @@ func serve(cfg *config.Config) {
 		}
 		return httpx.Destination{Connected: false}
 	}
-	httpx.NewDestinationHandler(resolveDest, auth).Register(mux)
+	httpx.NewDestinationHandler(resolveDest, calRepo.SourceAttendees, auth).Register(mux)
 	httpx.NewGoogleConnectHandler(googleOAuthFor, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
 	httpx.NewAPIv1(empRepo, calRepo, reconciler, revoker, onboardingSvc, auth).Register(mux)
 	fathomKeyFor := func(ctx context.Context, org db.OrgID) string {

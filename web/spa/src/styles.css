@@ -124,3 +124,7 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--brand) 6%, transpar
 
 .spin { display: inline-block; animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+.src { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 10px; background: var(--chip-bg, #eef); color: var(--chip-fg, #334); font-size: 11px; }
+@media (prefers-color-scheme: dark){ .chip { background: #26304a; color: #cdd7f0; } }
