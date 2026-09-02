@@ -16,6 +16,7 @@ type AppSettings struct {
 	CompanyName, AppName, SupportAddr, PrivacyURL, TermsURL string
 	FathomAPIKey                                            string
 	GoogleOAuthClientID, GoogleOAuthClientSecret            string
+	SyncInterval                                            string
 }
 
 // AppSettingsStore persists per-org app settings with secrets encrypted.
@@ -41,10 +42,11 @@ func (s *AppSettingsStore) Get(ctx context.Context, org db.OrgID) (*AppSettings,
 		SELECT coalesce(smtp_host,''), coalesce(smtp_port,''), coalesce(smtp_user,''), smtp_pass_ciphertext,
 		       coalesce(email_from,''), coalesce(company_name,''), coalesce(app_name,''), coalesce(support_addr,''),
 		       coalesce(privacy_url,''), coalesce(terms_url,''), fathom_api_key_ciphertext,
-		       coalesce(google_oauth_client_id,''), google_oauth_secret_ciphertext
+		       coalesce(google_oauth_client_id,''), google_oauth_secret_ciphertext,
+		       coalesce(sync_interval,'')
 		FROM org_app_settings WHERE org_id = $1`, int64(org)).
 		Scan(&a.SMTPHost, &a.SMTPPort, &a.SMTPUser, &smtpPassCT, &a.EmailFrom, &a.CompanyName, &a.AppName,
-			&a.SupportAddr, &a.PrivacyURL, &a.TermsURL, &fathomKeyCT, &a.GoogleOAuthClientID, &gSecretCT)
+			&a.SupportAddr, &a.PrivacyURL, &a.TermsURL, &fathomKeyCT, &a.GoogleOAuthClientID, &gSecretCT, &a.SyncInterval)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoAppSettings
 	}
@@ -100,8 +102,8 @@ func (s *AppSettingsStore) Save(ctx context.Context, org db.OrgID, in AppSetting
 		INSERT INTO org_app_settings
 			(org_id, smtp_host, smtp_port, smtp_user, smtp_pass_ciphertext, email_from,
 			 company_name, app_name, support_addr, privacy_url, terms_url, fathom_api_key_ciphertext,
-			 google_oauth_client_id, google_oauth_secret_ciphertext, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())
+			 google_oauth_client_id, google_oauth_secret_ciphertext, sync_interval, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())
 		ON CONFLICT (org_id) DO UPDATE SET
 			smtp_host = EXCLUDED.smtp_host, smtp_port = EXCLUDED.smtp_port, smtp_user = EXCLUDED.smtp_user,
 			smtp_pass_ciphertext = COALESCE(EXCLUDED.smtp_pass_ciphertext, org_app_settings.smtp_pass_ciphertext),
@@ -110,9 +112,10 @@ func (s *AppSettingsStore) Save(ctx context.Context, org db.OrgID, in AppSetting
 			fathom_api_key_ciphertext = COALESCE(EXCLUDED.fathom_api_key_ciphertext, org_app_settings.fathom_api_key_ciphertext),
 			google_oauth_client_id = EXCLUDED.google_oauth_client_id,
 			google_oauth_secret_ciphertext = COALESCE(EXCLUDED.google_oauth_secret_ciphertext, org_app_settings.google_oauth_secret_ciphertext),
+			sync_interval = EXCLUDED.sync_interval,
 			updated_at = now()`,
 		int64(org), nz(in.SMTPHost), nz(in.SMTPPort), nz(in.SMTPUser), smtpPass, nz(in.EmailFrom),
 		nz(in.CompanyName), nz(in.AppName), nz(in.SupportAddr), nz(in.PrivacyURL), nz(in.TermsURL), fathomKey,
-		nz(in.GoogleOAuthClientID), gSecret)
+		nz(in.GoogleOAuthClientID), gSecret, nz(in.SyncInterval))
 	return err
 }

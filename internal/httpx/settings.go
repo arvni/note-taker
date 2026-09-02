@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/rbac"
@@ -53,7 +54,7 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 		"smtp_host": "", "smtp_port": "587", "smtp_user": "", "has_smtp_pass": false, "email_from": "",
 		"company_name": "", "app_name": "", "support_addr": "", "privacy_url": "", "terms_url": "",
 		"has_fathom_key":         false,
-		"google_oauth_client_id": "", "has_google_secret": false,
+		"google_oauth_client_id": "", "has_google_secret": false, "sync_interval": "",
 		"google_redirect_uri": h.gRedirect, // register this in Google Cloud Console
 	}
 	if a, err := h.app.Get(r.Context(), db.OrgID(p.OrgID)); err == nil {
@@ -70,6 +71,7 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 		out["has_fathom_key"] = a.FathomAPIKey != ""
 		out["google_oauth_client_id"] = a.GoogleOAuthClientID
 		out["has_google_secret"] = a.GoogleOAuthClientSecret != ""
+		out["sync_interval"] = a.SyncInterval
 	} else if !errors.Is(err, tokens.ErrNoAppSettings) {
 		log.Printf("settings getApp org=%d: %v", p.OrgID, err)
 		writeErr(w, http.StatusInternalServerError, "could not load settings")
@@ -92,6 +94,7 @@ type appSettingsReq struct {
 	FathomKey      string `json:"fathom_api_key"`
 	GoogleClientID string `json:"google_oauth_client_id"`
 	GoogleSecret   string `json:"google_oauth_client_secret"`
+	SyncInterval   string `json:"sync_interval"`
 }
 
 func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +104,17 @@ func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	if req.SyncInterval != "" {
+		d, err := time.ParseDuration(req.SyncInterval)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "sync interval must be a duration like 5m, 15m, or 1h")
+			return
+		}
+		if d < time.Minute {
+			writeErr(w, http.StatusBadRequest, "sync interval must be at least 1m")
+			return
+		}
+	}
 	if err := h.app.Save(r.Context(), db.OrgID(p.OrgID), tokens.AppSettings{
 		SMTPHost: req.SMTPHost, SMTPPort: req.SMTPPort, SMTPUser: req.SMTPUser, SMTPPass: req.SMTPPass,
 		EmailFrom: req.EmailFrom, CompanyName: req.CompanyName, AppName: req.AppName,
@@ -108,6 +122,7 @@ func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
 		FathomAPIKey:            req.FathomKey,
 		GoogleOAuthClientID:     req.GoogleClientID,
 		GoogleOAuthClientSecret: req.GoogleSecret,
+		SyncInterval:            req.SyncInterval,
 	}); err != nil {
 		log.Printf("settings putApp org=%d: %v", p.OrgID, err)
 		writeErr(w, http.StatusInternalServerError, "could not save settings")

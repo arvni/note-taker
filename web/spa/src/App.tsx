@@ -218,7 +218,7 @@ function AppSettingsCard() {
     smtp_host: x.smtp_host, smtp_port: x.smtp_port, smtp_user: x.smtp_user, email_from: x.email_from,
     company_name: x.company_name, app_name: x.app_name, support_addr: x.support_addr,
     privacy_url: x.privacy_url, terms_url: x.terms_url,
-    google_oauth_client_id: x.google_oauth_client_id,
+    google_oauth_client_id: x.google_oauth_client_id, sync_interval: x.sync_interval,
   }); }).catch((e) => setErr(e.message)); }, []);
 
   const on = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
@@ -249,6 +249,10 @@ function AppSettingsCard() {
       <h4>Fathom</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>API key to register the recording webhook (Fathom Calendar tab).</p>
       <label className="field"><span>Fathom API key {a?.has_fathom_key && <em className="muted">(set)</em>}</span><input type="password" value={f.fathom_api_key ?? ""} onChange={on("fathom_api_key")} placeholder={a?.has_fathom_key ? "••••••••" : ""} /></label>
+
+      <h4>Sync</h4>
+      <p className="muted" style={{ margin: "0 0 8px" }}>How often calendars are pulled from Zoho and pushed to the Fathom calendar (e.g. 5m, 15m, 1h; min 1m). Blank = default.</p>
+      <Field k="sync_interval" label="Sync interval" ph="5m" />
 
       <h4>Google Calendar (destination)</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>OAuth client for the “Connect Google Calendar” button (Fathom Calendar tab). Create it in Google Cloud Console → Credentials.</p>

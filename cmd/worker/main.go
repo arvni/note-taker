@@ -227,11 +227,36 @@ func main() {
 		log.Printf("worker: Fathom polling backup enabled (interval=%s)", cfg.FathomPollInterval)
 	}
 
-	directory.RunPeriodic(ctx, cfg.DirectorySyncInterval, func(ctx context.Context) error {
-		return syncAllEmployees(ctx, empRepo, engine)
-	})
+	// Calendar sync loop. The cadence is configurable in the app (Settings →
+	// sync interval), re-read each cycle so a change takes effect without a
+	// restart; falls back to DIRECTORY_SYNC_INTERVAL. Runs immediately, then waits.
+	log.Printf("worker: calendar sync loop started (interval=%s, overridable in Settings)", syncInterval(ctx, appSettings, cfg))
+	for {
+		if err := syncAllEmployees(ctx, empRepo, engine); err != nil {
+			log.Printf("sync run: %v", err)
+		}
+		select {
+		case <-time.After(syncInterval(ctx, appSettings, cfg)):
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
 
 	log.Print("worker stopped")
+}
+
+// syncInterval resolves the calendar-sync cadence: the admin org's configured
+// value from the app (Settings), else DIRECTORY_SYNC_INTERVAL. Values below 1m
+// are ignored to avoid hammering the upstream APIs.
+func syncInterval(ctx context.Context, appSettings *tokens.AppSettingsStore, cfg *config.Config) time.Duration {
+	if a, err := appSettings.Get(ctx, db.OrgID(cfg.AdminOrgID)); err == nil && a.SyncInterval != "" {
+		if d, err := time.ParseDuration(a.SyncInterval); err == nil && d >= time.Minute {
+			return d
+		}
+	}
+	return cfg.DirectorySyncInterval
 }
 
 // pollFathomRecordings pulls recent recorded meetings from the Fathom API and

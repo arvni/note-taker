@@ -33,6 +33,7 @@ export interface AppSettings {
   company_name: string; app_name: string; support_addr: string; privacy_url: string; terms_url: string;
   has_fathom_key: boolean;
   google_oauth_client_id: string; has_google_secret: boolean; google_redirect_uri: string;
+  sync_interval: string;
 }
 export interface ImportResult {
   parsed: number; created: number; updated: number; disabled: number;
