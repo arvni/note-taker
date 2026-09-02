@@ -123,7 +123,7 @@ func TestSyncEngine_CreateUpdateCancel(t *testing.T) {
 	gsrv := g.server(t)
 
 	repo := calendar.NewRepo(pool)
-	scanner := calendar.NewService(fakeTP{}, func(context.Context, db.OrgID) (string, error) { return zsrv.URL, nil }, repo, fakePP{}, nil)
+	scanner := calendar.NewService(fakeTP{}, func(context.Context, db.OrgID) (string, error) { return zsrv.URL, nil }, repo, fakePP{}, nil, false)
 	dest := google.NewClient(gsrv.URL, "dest", google.StaticToken("gtok"))
 	engine := NewEngine(scanner, func(context.Context, db.OrgID) (Destination, error) { return dest, nil }, repo, nil)
 	org := db.OrgID(oid)

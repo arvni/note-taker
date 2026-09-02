@@ -195,7 +195,7 @@ func serve(cfg *config.Config) {
 	// Calendar discovery + scan (spec §27-32), driven per authorized employee by
 	// the sync loop in Phase 8.
 	calRepo := calendar.NewRepo(pool)
-	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog)
+	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog, cfg.SyncAllEvents)
 	_ = calSvc // consumed by the worker sync loops (Phase 8)
 
 	oauthHandler := httpx.NewOAuthHandler(httpx.OAuthDeps{

@@ -86,6 +86,8 @@ type MinimizedEvent struct {
 	EndsAt          *time.Time
 	MeetingProvider string
 	MeetingURL      string
+	Description     string
+	Location        string
 	SourceUpdatedAt *time.Time
 }
 
@@ -95,16 +97,17 @@ func (r *Repo) UpsertMapping(ctx context.Context, e MinimizedEvent) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO event_mappings
 			(employee_id, calendar_uid, source_event_id, title, starts_at, ends_at,
-			 meeting_provider, meeting_url, source_updated_at, last_seen_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+			 meeting_provider, meeting_url, description, location, source_updated_at, last_seen_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
 		ON CONFLICT (employee_id, source_event_id) DO UPDATE SET
 			calendar_uid = EXCLUDED.calendar_uid, title = EXCLUDED.title,
 			starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at,
 			meeting_provider = EXCLUDED.meeting_provider, meeting_url = EXCLUDED.meeting_url,
+			description = EXCLUDED.description, location = EXCLUDED.location,
 			source_updated_at = EXCLUDED.source_updated_at,
 			last_seen_at = now(), cancelled_at = NULL, updated_at = now()`,
 		e.EmployeeID, e.CalendarUID, e.SourceEventID, e.Title, e.StartsAt, e.EndsAt,
-		e.MeetingProvider, e.MeetingURL, e.SourceUpdatedAt)
+		e.MeetingProvider, e.MeetingURL, e.Description, e.Location, e.SourceUpdatedAt)
 	return err
 }
 

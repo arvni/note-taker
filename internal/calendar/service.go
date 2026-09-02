@@ -33,10 +33,11 @@ type Service struct {
 	policy  PolicyProvider
 	audit   *audit.Logger
 	window  time.Duration // how far ahead to scan (<= 31 days per Zoho)
+	syncAll bool          // when true, sync every event, not only ones with a video link
 }
 
-func NewService(tp TokenProvider, baseFor BaseFor, repo *Repo, pp PolicyProvider, auditLog *audit.Logger) *Service {
-	return &Service{tokens: tp, baseFor: baseFor, repo: repo, policy: pp, audit: auditLog, window: 30 * 24 * time.Hour}
+func NewService(tp TokenProvider, baseFor BaseFor, repo *Repo, pp PolicyProvider, auditLog *audit.Logger, syncAll bool) *Service {
+	return &Service{tokens: tp, baseFor: baseFor, repo: repo, policy: pp, audit: auditLog, window: 30 * 24 * time.Hour, syncAll: syncAll}
 }
 
 func (s *Service) api(ctx context.Context, org db.OrgID) (*APIClient, error) {
@@ -112,9 +113,12 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 		calStored, noMeeting, other := 0, 0, 0
 		for _, ev := range events {
 			det := DetectMeeting(ev.Location, ev.Description, "")
+			// When syncAll is set, every (non-personal, non-private) event syncs,
+			// not just ones with a detected video link.
+			hasMeeting := det.HasMeeting() || s.syncAll
 			decision := policy.Evaluate(
 				policy.Calendar{Name: cal.Name, Type: cal.Type, Enabled: true, Personal: cal.IsPersonal},
-				policy.Event{IsPrivate: ev.IsPrivate, HasMeeting: det.HasMeeting()},
+				policy.Event{IsPrivate: ev.IsPrivate, HasMeeting: hasMeeting},
 				rec,
 			)
 			if !decision.Sync {
@@ -135,6 +139,8 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 				EndsAt:          parseZohoTime(ev.End),
 				MeetingProvider: string(det.Provider),
 				MeetingURL:      det.MeetingURL,
+				Description:     ev.Description,
+				Location:        ev.Location,
 				SourceUpdatedAt: parseZohoTime(ev.UpdatedAt),
 			}); err != nil {
 				return stored, err

@@ -21,6 +21,8 @@ type PendingEvent struct {
 	MeetingURL         string
 	SourceUpdatedAt    *time.Time
 	DestinationEventID string
+	Description        string
+	Location           string
 }
 
 // ListToCreate returns qualifying mappings that have no destination event yet
@@ -29,7 +31,7 @@ func (r *Repo) ListToCreate(ctx context.Context, employeeID int64) ([]PendingEve
 	return r.listPending(ctx, `
 		SELECT id, employee_id, calendar_uid, source_event_id, coalesce(title,''),
 		       starts_at, ends_at, coalesce(meeting_provider,''), coalesce(meeting_url,''),
-		       source_updated_at, ''
+		       source_updated_at, '', coalesce(description,''), coalesce(location,'')
 		FROM event_mappings
 		WHERE employee_id = $1 AND destination_event_id IS NULL AND cancelled_at IS NULL`, employeeID)
 }
@@ -40,7 +42,7 @@ func (r *Repo) ListToUpdate(ctx context.Context, employeeID int64) ([]PendingEve
 	return r.listPending(ctx, `
 		SELECT id, employee_id, calendar_uid, source_event_id, coalesce(title,''),
 		       starts_at, ends_at, coalesce(meeting_provider,''), coalesce(meeting_url,''),
-		       source_updated_at, destination_event_id
+		       source_updated_at, destination_event_id, coalesce(description,''), coalesce(location,'')
 		FROM event_mappings
 		WHERE employee_id = $1 AND destination_event_id IS NOT NULL AND cancelled_at IS NULL
 		  AND source_updated_at IS NOT NULL
@@ -53,7 +55,7 @@ func (r *Repo) ListToCancel(ctx context.Context, employeeID int64, scanStart tim
 	return r.listPending(ctx, `
 		SELECT id, employee_id, calendar_uid, source_event_id, coalesce(title,''),
 		       starts_at, ends_at, coalesce(meeting_provider,''), coalesce(meeting_url,''),
-		       source_updated_at, destination_event_id
+		       source_updated_at, destination_event_id, coalesce(description,''), coalesce(location,'')
 		FROM event_mappings
 		WHERE employee_id = $1 AND destination_event_id IS NOT NULL AND cancelled_at IS NULL
 		  AND last_seen_at < $2`, employeeID, scanStart)
@@ -70,7 +72,7 @@ func (r *Repo) listPending(ctx context.Context, q string, args ...any) ([]Pendin
 		var e PendingEvent
 		if err := rows.Scan(&e.ID, &e.EmployeeID, &e.CalendarUID, &e.SourceEventID, &e.Title,
 			&e.StartsAt, &e.EndsAt, &e.MeetingProvider, &e.MeetingURL, &e.SourceUpdatedAt,
-			&e.DestinationEventID); err != nil {
+			&e.DestinationEventID, &e.Description, &e.Location); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

@@ -115,7 +115,7 @@ func main() {
 	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, nil)
 
 	calRepo := calendar.NewRepo(pool)
-	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog)
+	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog, cfg.SyncAllEvents)
 
 	// Destination: the Google Calendar that Fathom watches (spec §42). Resolved
 	// per org: prefer the admin-connected calendar (OAuth, stored per org, entered

@@ -30,6 +30,7 @@ type Config struct {
 	EmailProvider string
 
 	DirectorySyncInterval time.Duration
+	SyncAllEvents         bool
 
 	CompanyName string
 	AppName     string
@@ -119,6 +120,7 @@ func Load() (*Config, error) {
 		EmailProvider: env("EMAIL_PROVIDER", ""),
 
 		DirectorySyncInterval: dur("DIRECTORY_SYNC_INTERVAL", time.Hour),
+		SyncAllEvents:         env("SYNC_ALL_EVENTS", "") == "1",
 
 		CompanyName: env("COMPANY_NAME", "Your Company"),
 		AppName:     env("APP_NAME", "Calendar Bridge"),

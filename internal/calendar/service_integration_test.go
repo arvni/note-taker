@@ -67,7 +67,7 @@ func TestDiscoverAndScan(t *testing.T) {
 
 	zoho := fakeCalendarAPI(t)
 	repo := NewRepo(pool)
-	svc := NewService(fakeTP{}, func(context.Context, db.OrgID) (string, error) { return zoho.URL, nil }, repo, fakePP{empEnabled: true}, nil)
+	svc := NewService(fakeTP{}, func(context.Context, db.OrgID) (string, error) { return zoho.URL, nil }, repo, fakePP{empEnabled: true}, nil, false)
 	org := db.OrgID(oid)
 
 	// Discover: 2 calendars, work enabled, personal disabled.

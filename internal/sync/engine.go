@@ -161,13 +161,22 @@ func destEvent(m calendar.PendingEvent) (google.Event, bool) {
 	if m.StartsAt == nil || m.EndsAt == nil {
 		return google.Event{}, false
 	}
-	desc := "Synced meeting"
+	// Carry the source event's real description/location. Keep the join URL
+	// discoverable for Fathom: put it in Location, and prepend it to the body.
+	loc := m.Location
 	if m.MeetingURL != "" {
-		desc = "Join: " + m.MeetingURL
+		loc = m.MeetingURL
+	}
+	desc := m.Description
+	if m.MeetingURL != "" {
+		desc = "Join: " + m.MeetingURL + "\n\n" + desc
+	}
+	if desc == "" {
+		desc = "Synced from Zoho"
 	}
 	return google.Event{
 		Summary:     m.Title,
-		Location:    m.MeetingURL,
+		Location:    loc,
 		Description: desc,
 		Start:       *m.StartsAt,
 		End:         *m.EndsAt,
