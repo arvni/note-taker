@@ -109,6 +109,7 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 			log.Printf("scan: employee=%d calendar=%s: %v", employeeID, cal.UID, err)
 			continue // one bad calendar shouldn't abort the whole scan
 		}
+		calStored, noMeeting, other := 0, 0, 0
 		for _, ev := range events {
 			det := DetectMeeting(ev.Location, ev.Description, "")
 			decision := policy.Evaluate(
@@ -117,8 +118,14 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 				rec,
 			)
 			if !decision.Sync {
+				if !det.HasMeeting() {
+					noMeeting++
+				} else {
+					other++
+				}
 				continue
 			}
+			calStored++
 			if err := s.repo.UpsertMapping(ctx, MinimizedEvent{
 				EmployeeID:      employeeID,
 				CalendarUID:     cal.UID,
@@ -134,6 +141,8 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 			}
 			stored++
 		}
+		log.Printf("scan: employee=%d calendar=%q fetched=%d stored=%d skipped_no_meeting=%d skipped_other=%d",
+			employeeID, cal.Name, len(events), calStored, noMeeting, other)
 	}
 	return stored, nil
 }

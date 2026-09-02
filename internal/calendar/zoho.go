@@ -120,6 +120,10 @@ func (c *APIClient) get(ctx context.Context, accessToken, path string) ([]byte, 
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Zoho-oauthtoken "+accessToken)
+	// Zoho omits event descriptions unless this Accept variant is requested; the
+	// description carries the video-meeting join link for external (Teams/Outlook)
+	// invites, so we need it for meeting detection (spec §29).
+	req.Header.Set("Accept", "application/json+large")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err

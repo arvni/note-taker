@@ -18,6 +18,9 @@ import (
 
 // Scanner refreshes the source event mappings for an employee (calendar.Service).
 type Scanner interface {
+	// Discover lists and stores the employee's calendars so Scan has something
+	// to read (personal calendars default disabled).
+	Discover(ctx context.Context, org db.OrgID, employeeID int64) (int, error)
 	Scan(ctx context.Context, org db.OrgID, employeeID int64) (int, error)
 }
 
@@ -43,13 +46,16 @@ type MappingRepo interface {
 // Engine runs the per-employee synchronization.
 type Engine struct {
 	scanner Scanner
-	dest    Destination
+	destFor func(ctx context.Context, org db.OrgID) (Destination, error)
 	repo    MappingRepo
 	audit   *audit.Logger
 }
 
-func NewEngine(scanner Scanner, dest Destination, repo MappingRepo, auditLog *audit.Logger) *Engine {
-	return &Engine{scanner: scanner, dest: dest, repo: repo, audit: auditLog}
+// NewEngine builds the sync engine. destFor resolves the destination calendar
+// per org (the admin-connected Google calendar, stored per org), so the worker
+// writes to whatever each org connected in the UI rather than a fixed env target.
+func NewEngine(scanner Scanner, destFor func(ctx context.Context, org db.OrgID) (Destination, error), repo MappingRepo, auditLog *audit.Logger) *Engine {
+	return &Engine{scanner: scanner, destFor: destFor, repo: repo, audit: auditLog}
 }
 
 // Report summarizes a sync run.
@@ -69,8 +75,23 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		return rep, err
 	}
 
+	// Discover calendars first so a newly authorized employee (or one whose
+	// calendars changed) has enabled calendars for Scan to read. A discovery
+	// failure is non-fatal — Scan proceeds with whatever is already stored.
+	if _, err := e.scanner.Discover(ctx, org, employeeID); err != nil {
+		log.Printf("sync discover employee=%d org=%d: %v", employeeID, org, err)
+	}
+
 	if _, err := e.scanner.Scan(ctx, org, employeeID); err != nil {
 		return rep, err
+	}
+
+	// Resolve the org's destination calendar (admin-connected). Without one there
+	// is nowhere to write, so skip the reconcile rather than error the whole run.
+	dest, err := e.destFor(ctx, org)
+	if err != nil {
+		log.Printf("sync: no destination for org=%d employee=%d: %v", org, employeeID, err)
+		return rep, nil
 	}
 
 	// CREATE
@@ -83,7 +104,7 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		if !ok {
 			continue // missing start/end — cannot create a valid destination event
 		}
-		id, err := e.dest.CreateEvent(ctx, ev)
+		id, err := dest.CreateEvent(ctx, ev)
 		if err != nil {
 			log.Printf("sync create employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
 			continue
@@ -105,7 +126,7 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		if !ok {
 			continue
 		}
-		if err := e.dest.UpdateEvent(ctx, m.DestinationEventID, ev); err != nil {
+		if err := dest.UpdateEvent(ctx, m.DestinationEventID, ev); err != nil {
 			log.Printf("sync update employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
 			continue
 		}
@@ -121,7 +142,7 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		return rep, err
 	}
 	for _, m := range toCancel {
-		if err := e.dest.DeleteEvent(ctx, m.DestinationEventID); err != nil {
+		if err := dest.DeleteEvent(ctx, m.DestinationEventID); err != nil {
 			log.Printf("sync cancel employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
 			continue
 		}

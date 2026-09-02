@@ -74,6 +74,7 @@ func main() {
 	auditLog := audit.New(audit.NewPostgresSink(pool))
 	empRepo := directory.NewRepo(pool)
 	credStore := tokens.NewStore(pool, cipher)
+	appSettings := tokens.NewAppSettingsStore(pool, cipher)
 	zohoSettings := tokens.NewZohoSettingsStore(pool, cipher)
 	zohoRedirect := cfg.Zoho.RedirectURI
 	if zohoRedirect == "" {
@@ -116,22 +117,48 @@ func main() {
 	calRepo := calendar.NewRepo(pool)
 	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog)
 
-	// Destination: the Google Calendar that Fathom watches (spec §42). Prefer a
-	// service-account key (JWT-bearer exchange); fall back to a static token.
-	var gts google.TokenSource = google.StaticToken(cfg.GoogleAccessToken)
+	// Destination: the Google Calendar that Fathom watches (spec §42). Resolved
+	// per org: prefer the admin-connected calendar (OAuth, stored per org, entered
+	// in the UI); fall back to an env service-account/static token.
+	destStore := tokens.NewGoogleDestStore(pool, cipher)
+	googleRedirect := cfg.GoogleOAuthRedirectURL
+	if googleRedirect == "" {
+		googleRedirect = cfg.PublicBaseURL + "/oauth/google/callback"
+	}
+	googleOAuthFor := func(ctx context.Context, org db.OrgID) *google.OAuthClient {
+		if a, err := appSettings.Get(ctx, org); err == nil && a.GoogleOAuthClientID != "" && a.GoogleOAuthClientSecret != "" {
+			return google.NewOAuthClient(a.GoogleOAuthClientID, a.GoogleOAuthClientSecret, googleRedirect)
+		}
+		if cfg.GoogleOAuthClientID != "" && cfg.GoogleOAuthClientSecret != "" {
+			return google.NewOAuthClient(cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, googleRedirect)
+		}
+		return nil
+	}
+	var envTS google.TokenSource = google.StaticToken(cfg.GoogleAccessToken)
 	if cfg.GoogleCredentialsFile != "" {
 		keyJSON, err := os.ReadFile(cfg.GoogleCredentialsFile)
 		if err != nil {
 			log.Fatalf("worker: read Google credentials: %v", err)
 		}
-		gts, err = google.NewServiceAccountTokenSource(keyJSON, google.CalendarScope, cfg.GoogleSubject)
+		envTS, err = google.NewServiceAccountTokenSource(keyJSON, google.CalendarScope, cfg.GoogleSubject)
 		if err != nil {
 			log.Fatalf("worker: Google service account: %v", err)
 		}
 		log.Print("worker: using Google service-account credentials")
 	}
-	gcal := google.NewClient(cfg.GoogleCalendarBase, cfg.GoogleCalendarID, gts)
-	engine := sync.NewEngine(calSvc, gcal, calRepo, auditLog)
+	destFor := func(ctx context.Context, org db.OrgID) (sync.Destination, error) {
+		if d, err := destStore.Get(ctx, org); err == nil {
+			if oc := googleOAuthFor(ctx, org); oc != nil {
+				ts := google.NewRefreshTokenSource(oc, d.RefreshToken)
+				return google.NewClient(cfg.GoogleCalendarBase, d.CalendarID, ts), nil
+			}
+		}
+		if cfg.GoogleCalendarID != "" && (cfg.GoogleCredentialsFile != "" || cfg.GoogleAccessToken != "") {
+			return google.NewClient(cfg.GoogleCalendarBase, cfg.GoogleCalendarID, envTS), nil
+		}
+		return nil, fmt.Errorf("no Google destination configured for org %d", org)
+	}
+	engine := sync.NewEngine(calSvc, destFor, calRepo, auditLog)
 
 	log.Printf("worker started (env=%s); sync interval=%s; purge interval=%s",
 		cfg.AppEnv, cfg.DirectorySyncInterval, cfg.RetentionPurgeInterval)
@@ -155,7 +182,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("worker: templates: %v", err)
 		}
-		resolve := wire.OnboardingResolver(tokens.NewAppSettingsStore(pool, cipher), cfg)
+		resolve := wire.OnboardingResolver(appSettings, cfg)
 		onbSvc := onboarding.NewService(onboarding.NewRepo(pool), empStore{empRepo}, resolve, auditLog, tmpl,
 			cfg.PublicBaseURL, cfg.OnboardingTokenBytes, cfg.OnboardingTokenTTL)
 		offboarder := tokens.NewOffboarder(credStore, zohoRevokerFor, empRepo, auditLog)
@@ -194,7 +221,6 @@ func main() {
 	// per admin org (stored settings -> env fallback); disabled when no key or
 	// interval <= 0.
 	if cfg.FathomPollInterval > 0 {
-		appSettings := tokens.NewAppSettingsStore(pool, cipher)
 		go directory.RunPeriodic(ctx, cfg.FathomPollInterval, func(ctx context.Context) error {
 			return pollFathomRecordings(ctx, appSettings, cfg, calRepo)
 		})
