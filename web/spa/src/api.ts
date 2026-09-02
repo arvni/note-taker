@@ -35,6 +35,8 @@ export interface AppSettings {
   google_oauth_client_id: string; has_google_secret: boolean; google_redirect_uri: string;
   sync_interval: string;
 }
+export interface RecFile { name: string; size: number }
+export interface RecMeeting { dir: string; id: string; title: string; date: string; duration: number; transcript_url: string; files: RecFile[] }
 export interface ImportResult {
   parsed: number; created: number; updated: number; disabled: number;
   reactivated: number; conflicts: string[]; row_errors: string[];
@@ -65,6 +67,7 @@ export const api = {
     return req(`/api/v1/employees/${id}/revoke`, { method: "POST" });
   },
   detail(id: number): Promise<EmployeeDetail> { return req<EmployeeDetail>(`/api/v1/employees/${id}`); },
+  recordings(): Promise<{ meetings: RecMeeting[] }> { return req("/api/v1/recordings"); },
   updateEmployee(id: number, body: { name: string; email: string }): Promise<{ ok: boolean; name: string; email: string }> {
     return req(`/api/v1/employees/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   },

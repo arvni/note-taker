@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings, type AppSettings } from "./api";
+import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings, type AppSettings, type RecMeeting } from "./api";
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   authorized: { label: "Connected", cls: "ok" },
@@ -23,7 +23,7 @@ export function App() {
   const [detailId, setDetailId] = useState<number | null>(null);
   const [toast, setToast] = useState("");
   const [invitingId, setInvitingId] = useState<number | null>(null);
-  const [view, setView] = useState<"employees" | "calendar" | "settings">("employees");
+  const [view, setView] = useState<"employees" | "calendar" | "recordings" | "settings">("employees");
 
   async function load() {
     try {
@@ -61,6 +61,7 @@ export function App() {
         <nav className="nav">
           <button className={"navlink" + (view === "employees" ? " on" : "")} onClick={() => setView("employees")}>Employees</button>
           <button className={"navlink" + (view === "calendar" ? " on" : "")} onClick={() => setView("calendar")}>Fathom Calendar</button>
+          <button className={"navlink" + (view === "recordings" ? " on" : "")} onClick={() => setView("recordings")}>Recordings</button>
           <button className={"navlink" + (view === "settings" ? " on" : "")} onClick={() => setView("settings")}>Settings</button>
         </nav>
         <div className="who">{me?.email} · <span className="role">{me?.role}</span>
@@ -73,7 +74,7 @@ export function App() {
       {err && <div className="banner bad">{err} <button className="link" onClick={() => setErr("")}>dismiss</button></div>}
       {toast && <div className="toast" onAnimationEnd={() => setToast("")}>{toast}</div>}
 
-      {view === "settings" ? <SettingsView /> : view === "calendar" ? <CalendarView /> : (
+      {view === "settings" ? <SettingsView /> : view === "recordings" ? <RecordingsView /> : view === "calendar" ? <CalendarView /> : (
       <main>
         <section className="stats">
           <Stat label="Total" value={stats?.Total} />
@@ -353,6 +354,47 @@ function CalendarView() {
         </table>
       </section>
       {adding && <AddEventModal onClose={() => setAdding(false)} onDone={() => { setAdding(false); load(); }} />}
+    </main>
+  );
+}
+
+
+function RecordingsView() {
+  const [meetings, setMeetings] = useState<RecMeeting[] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { api.recordings().then((r) => setMeetings(r.meetings)).catch((e) => setErr(e.message)); }, []);
+  const fmt = (t: string) => t ? new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "\u2014";
+  const kb = (n: number) => n < 1024 ? n + " B" : (n / 1024).toFixed(0) + " KB";
+  const fileURL = (dir: string, name: string, dl?: boolean) =>
+    `/api/v1/recordings/${encodeURIComponent(dir)}/files/${encodeURIComponent(name)}` + (dl ? "?dl=1" : "");
+
+  return (
+    <main>
+      <section className="toolbar"><div><strong>Meeting files</strong> <span className="muted">transcripts &amp; summaries downloaded from Fireflies</span></div></section>
+      {err && <div className="banner bad">{err}</div>}
+      <section className="card">
+        <table>
+          <thead><tr><th>Meeting</th><th>When</th><th>Length</th><th>Files</th></tr></thead>
+          <tbody>
+            {meetings?.map((m) => (
+              <tr key={m.dir}>
+                <td><div className="emp"><strong>{m.title}</strong>{m.transcript_url && <a className="sub mini-link" href={m.transcript_url} target="_blank" rel="noreferrer">open in Fireflies ↗</a>}</div></td>
+                <td>{fmt(m.date)}</td>
+                <td>{m.duration ? Math.round(m.duration) + " min" : "\u2014"}</td>
+                <td><div className="src">{m.files.map((f) => (
+                  <span key={f.name} className="chip">
+                    <a className="mini-link" href={fileURL(m.dir, f.name)} target="_blank" rel="noreferrer">{f.name}</a>
+                    {" "}<a className="mini-link" href={fileURL(m.dir, f.name, true)} title="download">⬇</a>
+                    <span className="muted" style={{ marginLeft: 4 }}>{kb(f.size)}</span>
+                  </span>
+                ))}</div></td>
+              </tr>
+            ))}
+            {meetings && meetings.length === 0 && <tr><td colSpan={4} className="empty">No meeting files yet. They appear here after Fireflies sends a completed transcription webhook.</td></tr>}
+            {!meetings && !err && <tr><td colSpan={4} className="empty">Loading…</td></tr>}
+          </tbody>
+        </table>
+      </section>
     </main>
   );
 }
