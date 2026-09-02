@@ -227,7 +227,7 @@ function AppSettingsCard() {
 
   async function save() {
     setErr(""); setSaved(false);
-    try { await api.saveAppSettings(f); setF({ ...f, smtp_pass: "", fathom_api_key: "", google_oauth_client_secret: "" }); setSaved(true); setA(await api.appSettings()); }
+    try { await api.saveAppSettings(f); setF({ ...f, smtp_pass: "", fathom_api_key: "", fireflies_api_key: "", google_oauth_client_secret: "" }); setSaved(true); setA(await api.appSettings()); }
     catch (e: any) { setErr(e.message); }
   }
 
@@ -249,6 +249,10 @@ function AppSettingsCard() {
       <h4>Fathom</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>API key to register the recording webhook (Fathom Calendar tab).</p>
       <label className="field"><span>Fathom API key {a?.has_fathom_key && <em className="muted">(set)</em>}</span><input type="password" value={f.fathom_api_key ?? ""} onChange={on("fathom_api_key")} placeholder={a?.has_fathom_key ? "••••••••" : ""} /></label>
+
+      <h4>Fireflies.ai</h4>
+      <p className="muted" style={{ margin: "0 0 8px" }}>API key (Fireflies → Settings → Developer). Webhook endpoint to set in Fireflies: <code>{a?.google_redirect_uri ? a.google_redirect_uri.replace("/oauth/google/callback","/webhooks/fireflies") : "https://<your-domain>/webhooks/fireflies"}</code></p>
+      <label className="field"><span>Fireflies API key {a?.has_fireflies_key && <em className="muted">(set)</em>}</span><input type="password" value={f.fireflies_api_key ?? ""} onChange={on("fireflies_api_key")} placeholder={a?.has_fireflies_key ? "••••••••" : ""} /></label>
 
       <h4>Sync</h4>
       <p className="muted" style={{ margin: "0 0 8px" }}>How often calendars are pulled from Zoho and pushed to the Fathom calendar (e.g. 5m, 15m, 1h; min 1m). Blank = default.</p>

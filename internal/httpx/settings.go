@@ -69,6 +69,7 @@ func (h *SettingsHandler) getApp(w http.ResponseWriter, r *http.Request) {
 		out["privacy_url"] = a.PrivacyURL
 		out["terms_url"] = a.TermsURL
 		out["has_fathom_key"] = a.FathomAPIKey != ""
+		out["has_fireflies_key"] = a.FirefliesAPIKey != ""
 		out["google_oauth_client_id"] = a.GoogleOAuthClientID
 		out["has_google_secret"] = a.GoogleOAuthClientSecret != ""
 		out["sync_interval"] = a.SyncInterval
@@ -92,6 +93,7 @@ type appSettingsReq struct {
 	PrivacyURL     string `json:"privacy_url"`
 	TermsURL       string `json:"terms_url"`
 	FathomKey      string `json:"fathom_api_key"`
+	FirefliesKey   string `json:"fireflies_api_key"`
 	GoogleClientID string `json:"google_oauth_client_id"`
 	GoogleSecret   string `json:"google_oauth_client_secret"`
 	SyncInterval   string `json:"sync_interval"`
@@ -120,6 +122,7 @@ func (h *SettingsHandler) putApp(w http.ResponseWriter, r *http.Request) {
 		EmailFrom: req.EmailFrom, CompanyName: req.CompanyName, AppName: req.AppName,
 		SupportAddr: req.SupportAddr, PrivacyURL: req.PrivacyURL, TermsURL: req.TermsURL,
 		FathomAPIKey:            req.FathomKey,
+		FirefliesAPIKey:         req.FirefliesKey,
 		GoogleOAuthClientID:     req.GoogleClientID,
 		GoogleOAuthClientSecret: req.GoogleSecret,
 		SyncInterval:            req.SyncInterval,

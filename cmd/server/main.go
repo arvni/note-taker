@@ -362,6 +362,11 @@ func serve(cfg *config.Config) {
 		return wire.FathomAPIKey(ctx, appSettings, org, cfg.FathomAPIKey)
 	}
 	httpx.NewFathomAdminHandler(cfg.FathomAPIBase, fathomKeyFor, tokens.NewFathomWebhookStore(pool), auth, cfg.PublicBaseURL).Register(mux)
+	// Fireflies.ai notetaker: webhook receiver downloads each transcript+summary.
+	firefliesKeyFor := func(ctx context.Context, org db.OrgID) string {
+		return wire.FirefliesAPIKey(ctx, appSettings, org, cfg.FirefliesAPIKey)
+	}
+	httpx.NewFirefliesWebhookHandler(firefliesKeyFor, cfg.FirefliesDownloadDir, cfg.FirefliesWebhookSecret, db.OrgID(cfg.AdminOrgID)).Register(mux)
 	httpx.NewSettingsHandler(zohoSettings, appSettings, auth, zohoRedirect, googleRedirect).Register(mux)
 	if spaFS, err := web.SPA(); err == nil {
 		httpx.NewSPAHandler(spaFS).Register(mux)

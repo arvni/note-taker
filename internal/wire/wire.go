@@ -52,3 +52,12 @@ func FathomAPIKey(ctx context.Context, store *tokens.AppSettingsStore, org db.Or
 	}
 	return envKey
 }
+
+// FirefliesAPIKey resolves the org's Fireflies API key (stored settings first,
+// env fallback).
+func FirefliesAPIKey(ctx context.Context, store *tokens.AppSettingsStore, org db.OrgID, envKey string) string {
+	if got, err := store.Get(ctx, org); err == nil && got.FirefliesAPIKey != "" {
+		return got.FirefliesAPIKey
+	}
+	return envKey
+}

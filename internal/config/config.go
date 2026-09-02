@@ -52,6 +52,10 @@ type Config struct {
 	FathomWebhookSecret string
 	FathomPollInterval  time.Duration
 
+	FirefliesAPIKey        string
+	FirefliesWebhookSecret string
+	FirefliesDownloadDir   string
+
 	SessionKey string
 	SessionTTL time.Duration
 
@@ -141,6 +145,10 @@ func Load() (*Config, error) {
 		FathomAPIKey:        env("FATHOM_API_KEY", ""),
 		FathomWebhookSecret: env("FATHOM_WEBHOOK_SECRET", ""),
 		FathomPollInterval:  dur("FATHOM_POLL_INTERVAL", 15*time.Minute),
+
+		FirefliesAPIKey:        env("FIREFLIES_API_KEY", ""),
+		FirefliesWebhookSecret: env("FIREFLIES_WEBHOOK_SECRET", ""),
+		FirefliesDownloadDir:   env("FIREFLIES_DOWNLOAD_DIR", "/app/recordings"),
 
 		SessionKey: env("SESSION_KEY", ""),
 		SessionTTL: dur("SESSION_TTL", 30*time.Minute),
