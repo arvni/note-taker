@@ -208,3 +208,5 @@ tr.clickable:hover td { background: color-mix(in srgb, var(--brand) 6%, transpar
 .popover-ico { flex: 0 0 20px; text-align: center; opacity: .85; }
 .popover-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
 .popover-actions .btn { text-decoration: none; }
+
+.popover-desc { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; color: var(--text); max-height: 220px; overflow-y: auto; }

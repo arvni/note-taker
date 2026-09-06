@@ -349,7 +349,7 @@ const startOfWeek = (d: Date) => addDays(startOfDay(d), -startOfDay(d).getDay())
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-interface CalEv { id: string; title: string; start: Date; end: Date; from: string[]; link: string; location: string; }
+interface CalEv { id: string; title: string; start: Date; end: Date; from: string[]; link: string; location: string; description: string; }
 
 function toCalEvents(events: DestEvent[]): CalEv[] {
   return events
@@ -357,7 +357,7 @@ function toCalEvents(events: DestEvent[]): CalEv[] {
     .map((e) => {
       const start = new Date(e.start.dateTime!);
       const end = e.end?.dateTime ? new Date(e.end.dateTime) : new Date(start.getTime() + 30 * 60000);
-      return { id: e.id, title: e.summary || "(untitled)", start, end, from: e.source_emails ?? [], link: e.htmlLink, location: e.location };
+      return { id: e.id, title: e.summary || "(untitled)", start, end, from: e.source_emails ?? [], link: e.htmlLink, location: e.location, description: e.description || "" };
     })
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 }
@@ -417,6 +417,7 @@ function EventPopup({ ev, onClose }: { ev: CalEv; onClose: () => void }) {
         <div className="popover-row"><span className="popover-ico">🕐</span><div>{dayLabel}<br /><span className="muted">{hhmm(ev.start)} – {hhmm(ev.end)}</span></div></div>
         {ev.location && <div className="popover-row"><span className="popover-ico">📍</span><a href={ev.location} target="_blank" rel="noreferrer" className="mini-link">{ev.location}</a></div>}
         {ev.from.length > 0 && <div className="popover-row"><span className="popover-ico">👤</span><div className="src">{ev.from.map((m) => <span key={m} className="chip">{m}</span>)}</div></div>}
+        {ev.description && <div className="popover-row"><span className="popover-ico">📝</span><div className="popover-desc">{ev.description}</div></div>}
         <div className="popover-actions">
           {ev.link
             ? <a className="btn primary" href={ev.link} target="_blank" rel="noreferrer">Open in Google Calendar ↗</a>
