@@ -292,8 +292,6 @@ function CalendarView() {
   }
   useEffect(() => { load(); }, []);
 
-  const fmt = (t?: string) => t ? new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—";
-
   if (status && !status.connected) {
     return (
       <main>
@@ -333,31 +331,296 @@ function CalendarView() {
         </div>
       )}
       {fmsg && <div className="banner" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>{fmsg}</div>}
-      <section className="card">
-        <table>
-          <thead><tr><th>Event</th><th>From (user)</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
-          <tbody>
-            {data?.events.map((e) => (
-              <tr key={e.id}>
-                <td><div className="emp"><strong>{e.summary || "(untitled)"}</strong>{e.location && <a className="sub mini-link" href={e.location} target="_blank" rel="noreferrer">{e.location}</a>}</div></td>
-                <td>{e.source_emails && e.source_emails.length > 0
-                  ? <span className="src">{e.source_emails.map((m) => <span key={m} className="chip">{m}</span>)}</span>
-                  : <span className="muted">—</span>}</td>
-                <td>{fmt(e.start.dateTime)}</td>
-                <td>{fmt(e.end.dateTime)}</td>
-                <td>{e.htmlLink ? <a className="mini-link" href={e.htmlLink} target="_blank" rel="noreferrer">open ↗</a> : e.status}</td>
-              </tr>
-            ))}
-            {data && data.events.length === 0 && <tr><td colSpan={5} className="empty">No events in the destination calendar.</td></tr>}
-            {!data && !err && <tr><td colSpan={5} className="empty">Loading…</td></tr>}
-          </tbody>
-        </table>
-      </section>
+      <CalendarGrid events={data?.events ?? []} loading={!data && !err} />
       {adding && <AddEventModal onClose={() => setAdding(false)} onDone={() => { setAdding(false); load(); }} />}
     </main>
   );
 }
 
+// ---- Calendar grid (Google Calendar-style month / week view) ----
+
+type CalMode = "month" | "week" | "list";
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const startOfWeek = (d: Date) => addDays(startOfDay(d), -startOfDay(d).getDay()); // week starts Sunday
+const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+interface CalEv { id: string; title: string; start: Date; end: Date; from: string[]; link: string; location: string; }
+
+function toCalEvents(events: DestEvent[]): CalEv[] {
+  return events
+    .filter((e) => e.start?.dateTime)
+    .map((e) => {
+      const start = new Date(e.start.dateTime!);
+      const end = e.end?.dateTime ? new Date(e.end.dateTime) : new Date(start.getTime() + 30 * 60000);
+      return { id: e.id, title: e.summary || "(untitled)", start, end, from: e.source_emails ?? [], link: e.htmlLink, location: e.location };
+    })
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+}
+
+function CalendarGrid({ events, loading }: { events: DestEvent[]; loading: boolean }) {
+  const [mode, setMode] = useState<CalMode>("month");
+  const [cursor, setCursor] = useState<Date>(startOfDay(new Date()));
+  const [sel, setSel] = useState<CalEv | null>(null);
+  const evs = useMemo(() => toCalEvents(events), [events]);
+
+  const step = (dir: number) => {
+    if (mode === "month") { const x = new Date(cursor); x.setMonth(x.getMonth() + dir); setCursor(startOfDay(x)); }
+    else if (mode === "week") setCursor(addDays(cursor, dir * 7));
+    else setCursor(addDays(cursor, dir));
+  };
+
+  const title = mode === "week"
+    ? (() => { const s = startOfWeek(cursor); const e = addDays(s, 6); return `${MONTHS[s.getMonth()].slice(0, 3)} ${s.getDate()} – ${MONTHS[e.getMonth()].slice(0, 3)} ${e.getDate()}, ${e.getFullYear()}`; })()
+    : `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`;
+
+  return (
+    <section className="card cal-wrap">
+      <div className="cal-head">
+        <div className="cal-nav">
+          <button className="btn small" onClick={() => setCursor(startOfDay(new Date()))}>Today</button>
+          <button className="btn small icon" onClick={() => step(-1)} aria-label="Previous">‹</button>
+          <button className="btn small icon" onClick={() => step(1)} aria-label="Next">›</button>
+          <strong className="cal-title">{title}</strong>
+        </div>
+        <div className="seg">
+          {(["month", "week", "list"] as CalMode[]).map((m) => (
+            <button key={m} className={"seg-btn" + (mode === m ? " on" : "")} onClick={() => setMode(m)}>{m[0].toUpperCase() + m.slice(1)}</button>
+          ))}
+        </div>
+      </div>
+      {loading ? <div className="empty" style={{ padding: 40 }}>Loading…</div>
+        : mode === "month" ? <MonthView cursor={cursor} evs={evs} onSelect={setSel} />
+        : mode === "week" ? <WeekView cursor={cursor} evs={evs} onSelect={setSel} />
+        : <ListView evs={evs} onSelect={setSel} />}
+      {sel && <EventPopup ev={sel} onClose={() => setSel(null)} />}
+    </section>
+  );
+}
+
+// EventPopup is a Google-Calendar-style detail card for one event, with a button
+// that opens the event in Google Calendar (rather than the item being a link).
+function EventPopup({ ev, onClose }: { ev: CalEv; onClose: () => void }) {
+  const dayLabel = ev.start.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  return (
+    <div className="popover-overlay" onClick={onClose}>
+      <div className="popover" onClick={(e) => e.stopPropagation()}>
+        <div className="popover-head">
+          <span className="popover-swatch" />
+          <h3>{ev.title}</h3>
+          <button className="popover-x" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="popover-row"><span className="popover-ico">🕐</span><div>{dayLabel}<br /><span className="muted">{hhmm(ev.start)} – {hhmm(ev.end)}</span></div></div>
+        {ev.location && <div className="popover-row"><span className="popover-ico">📍</span><a href={ev.location} target="_blank" rel="noreferrer" className="mini-link">{ev.location}</a></div>}
+        {ev.from.length > 0 && <div className="popover-row"><span className="popover-ico">👤</span><div className="src">{ev.from.map((m) => <span key={m} className="chip">{m}</span>)}</div></div>}
+        <div className="popover-actions">
+          {ev.link
+            ? <a className="btn primary" href={ev.link} target="_blank" rel="noreferrer">Open in Google Calendar ↗</a>
+            : <span className="muted">No Google Calendar link available</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthView({ cursor, evs, onSelect }: { cursor: Date; evs: CalEv[]; onSelect: (e: CalEv) => void }) {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const gridStart = startOfWeek(first);
+  const weeks: Date[][] = [];
+  let day = gridStart;
+  // Enough weeks to cover the month (5 or 6).
+  const lastOfMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+  const gridEnd = addDays(startOfWeek(lastOfMonth), 6);
+  while (day <= gridEnd) {
+    const row: Date[] = [];
+    for (let i = 0; i < 7; i++) { row.push(day); day = addDays(day, 1); }
+    weeks.push(row);
+  }
+  const today = new Date();
+  const byDay = (d: Date) => evs.filter((e) => sameDay(e.start, d));
+
+  return (
+    <div className="cal-month">
+      <div className="cal-dow">{WEEKDAYS.map((w) => <div key={w} className="cal-dow-cell">{w}</div>)}</div>
+      {weeks.map((week, wi) => (
+        <div className="cal-week-row" key={wi}>
+          {week.map((d) => {
+            const dayEvs = byDay(d);
+            const shown = dayEvs.slice(0, 3);
+            const off = d.getMonth() !== cursor.getMonth();
+            return (
+              <div className={"cal-day" + (off ? " off" : "") + (sameDay(d, today) ? " today" : "")} key={d.toISOString()}>
+                <div className="cal-day-num">{sameDay(d, today) ? <span className="today-dot">{d.getDate()}</span> : d.getDate()}</div>
+                <div className="cal-chips">
+                  {shown.map((e) => (
+                    <button key={e.id} className="cal-chip" onClick={() => onSelect(e)} title={`${e.title}\n${hhmm(e.start)}–${hhmm(e.end)}${e.from.length ? "\n" + e.from.join(", ") : ""}`}>
+                      <span className="cal-chip-t">{hhmm(e.start)}</span> {e.title}
+                    </button>
+                  ))}
+                  {dayEvs.length > shown.length && <div className="cal-more">+{dayEvs.length - shown.length} more</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface Placed { e: CalEv; top: number; height: number; left: number; width: number; }
+const HOUR_PX = 44;
+
+function layoutDay(dayEvs: CalEv[], startHour: number): Placed[] {
+  // Greedy interval-graph column packing within overlapping clusters.
+  const sorted = [...dayEvs].sort((a, b) => a.start.getTime() - b.start.getTime() || a.end.getTime() - b.end.getTime());
+  const placed: Placed[] = [];
+  let cluster: CalEv[] = [];
+  let clusterEnd = 0;
+  const flush = () => {
+    if (!cluster.length) return;
+    const cols: CalEv[][] = [];
+    for (const e of cluster) {
+      let ci = cols.findIndex((col) => col[col.length - 1].end.getTime() <= e.start.getTime());
+      if (ci === -1) { cols.push([e]); ci = cols.length - 1; } else cols[ci].push(e);
+    }
+    const n = cols.length;
+    cols.forEach((col, ci) => col.forEach((e) => {
+      const sMin = e.start.getHours() * 60 + e.start.getMinutes() - startHour * 60;
+      const eMin = e.end.getHours() * 60 + e.end.getMinutes() - startHour * 60;
+      placed.push({ e, top: (sMin / 60) * HOUR_PX, height: Math.max(18, ((eMin - sMin) / 60) * HOUR_PX), left: (ci / n) * 100, width: (1 / n) * 100 });
+    }));
+    cluster = [];
+  };
+  for (const e of sorted) {
+    if (cluster.length && e.start.getTime() >= clusterEnd) flush();
+    cluster.push(e);
+    clusterEnd = Math.max(clusterEnd, e.end.getTime());
+  }
+  flush();
+  return placed;
+}
+
+function WeekView({ cursor, evs, onSelect }: { cursor: Date; evs: CalEv[]; onSelect: (e: CalEv) => void }) {
+  const weekStart = startOfWeek(cursor);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const weekEvs = evs.filter((e) => e.start >= weekStart && e.start < addDays(weekStart, 7));
+  // Hour range from events, clamped; sensible default when empty.
+  let minH = 8, maxH = 18;
+  if (weekEvs.length) {
+    minH = Math.min(...weekEvs.map((e) => e.start.getHours()));
+    maxH = Math.max(...weekEvs.map((e) => e.end.getHours() + (e.end.getMinutes() > 0 ? 1 : 0)));
+  }
+  minH = Math.max(0, Math.min(minH, 8));
+  maxH = Math.min(24, Math.max(maxH, 18));
+  const hours = Array.from({ length: maxH - minH }, (_, i) => minH + i);
+  const today = new Date();
+
+  return (
+    <div className="cal-weekwrap">
+      <div className="cal-week-head">
+        <div className="cal-gutter" />
+        {days.map((d) => (
+          <div key={d.toISOString()} className={"cal-wh" + (sameDay(d, today) ? " today" : "")}>
+            <div className="cal-wh-dow">{WEEKDAYS[d.getDay()]}</div>
+            <div className="cal-wh-num">{sameDay(d, today) ? <span className="today-dot">{d.getDate()}</span> : d.getDate()}</div>
+          </div>
+        ))}
+      </div>
+      <div className="cal-week-body">
+        <div className="cal-gutter">
+          {hours.map((h) => <div key={h} className="cal-hour-label" style={{ height: HOUR_PX }}>{h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : (h - 12) + " PM"}</div>)}
+        </div>
+        {days.map((d) => {
+          const dayEvs = weekEvs.filter((e) => sameDay(e.start, d));
+          const placed = layoutDay(dayEvs, minH);
+          return (
+            <div key={d.toISOString()} className="cal-daycol" style={{ height: hours.length * HOUR_PX }}>
+              {hours.map((h) => <div key={h} className="cal-slot" style={{ height: HOUR_PX }} />)}
+              {placed.map((p) => (
+                <button key={p.e.id} className="cal-ev" onClick={() => onSelect(p.e)}
+                  style={{ top: p.top, height: p.height, left: `calc(${p.left}% + 2px)`, width: `calc(${p.width}% - 4px)` }}
+                  title={`${p.e.title}\n${hhmm(p.e.start)}–${hhmm(p.e.end)}${p.e.from.length ? "\n" + p.e.from.join(", ") : ""}`}>
+                  <div className="cal-ev-t">{p.e.title}</div>
+                  <div className="cal-ev-time">{hhmm(p.e.start)}</div>
+                  {p.e.from.length > 0 && <div className="cal-ev-from">{p.e.from.join(", ")}</div>}
+                </button>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ListView({ evs, onSelect }: { evs: CalEv[]; onSelect: (e: CalEv) => void }) {
+  const upcoming = evs.filter((e) => e.end >= new Date()).slice(0, 200);
+  const fmt = (d: Date) => d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  return (
+    <table>
+      <thead><tr><th>Event</th><th>From (user)</th><th>Start</th><th>End</th><th></th></tr></thead>
+      <tbody>
+        {upcoming.map((e) => (
+          <tr key={e.id} className="clickable" onClick={() => onSelect(e)}>
+            <td><div className="emp"><strong>{e.title}</strong>{e.location && <span className="sub">{e.location}</span>}</div></td>
+            <td>{e.from.length > 0 ? <span className="src">{e.from.map((m) => <span key={m} className="chip">{m}</span>)}</span> : <span className="muted">—</span>}</td>
+            <td>{fmt(e.start)}</td>
+            <td>{fmt(e.end)}</td>
+            <td><span className="mini-link">details ›</span></td>
+          </tr>
+        ))}
+        {upcoming.length === 0 && <tr><td colSpan={5} className="empty">No upcoming events in the destination calendar.</td></tr>}
+      </tbody>
+    </table>
+  );
+}
+
+
+// SendCell emails a recording's transcript + summary: to manually entered
+// addresses, and/or (re)send to the employees matched from their calendars.
+function SendCell({ dir }: { dir: string }) {
+  const [emails, setEmails] = useState("");
+  const [busy, setBusy] = useState<"" | "manual" | "attendees">("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const list = () => emails.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+
+  async function doSend(body: { emails?: string[]; attendees?: boolean }, which: "manual" | "attendees") {
+    setBusy(which); setErr(""); setMsg("");
+    try {
+      const r = await api.sendRecording(dir, body);
+      const parts: string[] = [];
+      if (r.sent) parts.push(`✓ sent to ${r.sent}`);
+      if (r.failed?.length) parts.push(`${r.failed.length} failed`);
+      setMsg(parts.join(" · ") || "no recipients");
+      if (which === "manual" && r.sent) setEmails("");
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(""); }
+  }
+
+  return (
+    <div className="sendcell">
+      <div className="sendrow">
+        <input className="sendinput" placeholder="email, email…" value={emails}
+          onChange={(e) => setEmails(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && list().length && !busy) doSend({ emails: list() }, "manual"); }} />
+        <button className="btn small" disabled={!list().length || !!busy} onClick={() => doSend({ emails: list() }, "manual")}>
+          {busy === "manual" ? "Sending…" : "Send"}
+        </button>
+      </div>
+      <button className="btn small linkish" disabled={!!busy} onClick={() => doSend({ attendees: true }, "attendees")}>
+        {busy === "attendees" ? "Sending…" : "↻ Send to attendees"}
+      </button>
+      {msg && <div className="sendmsg ok">{msg}</div>}
+      {err && <div className="sendmsg bad">{err}</div>}
+    </div>
+  );
+}
 
 function RecordingsView() {
   const [meetings, setMeetings] = useState<RecMeeting[] | null>(null);
@@ -374,7 +637,7 @@ function RecordingsView() {
       {err && <div className="banner bad">{err}</div>}
       <section className="card">
         <table>
-          <thead><tr><th>Meeting</th><th>When</th><th>Length</th><th>Files</th></tr></thead>
+          <thead><tr><th>Meeting</th><th>When</th><th>Length</th><th>Files</th><th>Send to</th></tr></thead>
           <tbody>
             {meetings?.map((m) => (
               <tr key={m.dir}>
@@ -388,10 +651,11 @@ function RecordingsView() {
                     <span className="muted" style={{ marginLeft: 4 }}>{kb(f.size)}</span>
                   </span>
                 ))}</div></td>
+                <td><SendCell dir={m.dir} /></td>
               </tr>
             ))}
-            {meetings && meetings.length === 0 && <tr><td colSpan={4} className="empty">No meeting files yet. They appear here after Fireflies sends a completed transcription webhook.</td></tr>}
-            {!meetings && !err && <tr><td colSpan={4} className="empty">Loading…</td></tr>}
+            {meetings && meetings.length === 0 && <tr><td colSpan={5} className="empty">No meeting files yet. They appear here after Fireflies sends a completed transcription webhook.</td></tr>}
+            {!meetings && !err && <tr><td colSpan={5} className="empty">Loading…</td></tr>}
           </tbody>
         </table>
       </section>
