@@ -366,8 +366,12 @@ func serve(cfg *config.Config) {
 	firefliesKeyFor := func(ctx context.Context, org db.OrgID) string {
 		return wire.FirefliesAPIKey(ctx, appSettings, org, cfg.FirefliesAPIKey)
 	}
-	httpx.NewFirefliesWebhookHandler(firefliesKeyFor, cfg.FirefliesDownloadDir, cfg.FirefliesWebhookSecret, db.OrgID(cfg.AdminOrgID)).Register(mux)
-	httpx.NewRecordingsHandler(cfg.FirefliesDownloadDir, auth).Register(mux)
+	httpx.NewFirefliesWebhookHandler(firefliesKeyFor, cfg.FirefliesDownloadDir, cfg.FirefliesWebhookSecret, db.OrgID(cfg.AdminOrgID)).
+		WithAttendeeNotify(calRepo.MatchAttendees, onboardingResolve, cfg.FirefliesNotifyAttendees).
+		Register(mux)
+	httpx.NewRecordingsHandler(cfg.FirefliesDownloadDir, auth).
+		WithSend(onboardingResolve, calRepo.MatchAttendees, db.OrgID(cfg.AdminOrgID)).
+		Register(mux)
 	httpx.NewSettingsHandler(zohoSettings, appSettings, auth, zohoRedirect, googleRedirect).Register(mux)
 	if spaFS, err := web.SPA(); err == nil {
 		httpx.NewSPAHandler(spaFS).Register(mux)

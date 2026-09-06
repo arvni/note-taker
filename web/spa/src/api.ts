@@ -68,6 +68,9 @@ export const api = {
   },
   detail(id: number): Promise<EmployeeDetail> { return req<EmployeeDetail>(`/api/v1/employees/${id}`); },
   recordings(): Promise<{ meetings: RecMeeting[] }> { return req("/api/v1/recordings"); },
+  sendRecording(dir: string, body: { emails?: string[]; attendees?: boolean }): Promise<{ sent: number; recipients: string[]; failed: string[] }> {
+    return req(`/api/v1/recordings/${encodeURIComponent(dir)}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  },
   updateEmployee(id: number, body: { name: string; email: string }): Promise<{ ok: boolean; name: string; email: string }> {
     return req(`/api/v1/employees/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   },

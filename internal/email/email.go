@@ -14,10 +14,18 @@ import (
 
 // Message is a rendered email ready to send.
 type Message struct {
-	To       string
-	From     string
-	Subject  string
-	HTMLBody string
+	To          string
+	From        string
+	Subject     string
+	HTMLBody    string
+	Attachments []Attachment
+}
+
+// Attachment is a file attached to a Message (e.g. a meeting transcript).
+type Attachment struct {
+	Filename    string
+	ContentType string // e.g. "text/plain; charset=UTF-8"; defaults to octet-stream
+	Data        []byte
 }
 
 // Sender delivers a Message via an approved transactional provider (spec §21).
