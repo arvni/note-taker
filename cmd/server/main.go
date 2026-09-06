@@ -371,6 +371,7 @@ func serve(cfg *config.Config) {
 		Register(mux)
 	httpx.NewRecordingsHandler(cfg.FirefliesDownloadDir, auth).
 		WithSend(onboardingResolve, calRepo.MatchAttendees, db.OrgID(cfg.AdminOrgID)).
+		WithImport(firefliesKeyFor).
 		Register(mux)
 	httpx.NewSettingsHandler(zohoSettings, appSettings, auth, zohoRedirect, googleRedirect).Register(mux)
 	if spaFS, err := web.SPA(); err == nil {

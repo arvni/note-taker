@@ -71,6 +71,12 @@ export const api = {
   sendRecording(dir: string, body: { emails?: string[]; attendees?: boolean }): Promise<{ sent: number; recipients: string[]; failed: string[] }> {
     return req(`/api/v1/recordings/${encodeURIComponent(dir)}/send`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   },
+  importRecording(id: string): Promise<{ ok: boolean; dir: string; title: string }> {
+    return req("/api/v1/recordings/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+  },
+  syncRecordings(): Promise<{ imported: number; skipped: number; failed: number; titles: string[] }> {
+    return req("/api/v1/recordings/sync", { method: "POST" });
+  },
   updateEmployee(id: number, body: { name: string; email: string }): Promise<{ ok: boolean; name: string; email: string }> {
     return req(`/api/v1/employees/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   },

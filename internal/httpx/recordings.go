@@ -14,6 +14,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/db"
 	"github.com/arvinizadi/fathom/internal/email"
+	"github.com/arvinizadi/fathom/internal/fireflies"
 	"github.com/arvinizadi/fathom/internal/onboarding"
 	"github.com/arvinizadi/fathom/internal/rbac"
 )
@@ -31,6 +32,11 @@ type RecordingsHandler struct {
 	senderFor      onboarding.Resolver
 	matchAttendees func(ctx context.Context, org db.OrgID, start time.Time, window time.Duration, title string) ([]calendar.Attendee, error)
 	adminOrg       db.OrgID
+
+	// import dependency (nil-safe): resolves the Fireflies API key for pulling a
+	// past meeting by id (e.g. one that predates the webhook). Download-only — it
+	// does not email attendees.
+	firefliesKeyFor func(ctx context.Context, org db.OrgID) string
 }
 
 func NewRecordingsHandler(root string, auth *AuthMiddleware) *RecordingsHandler {
@@ -48,10 +54,143 @@ func (h *RecordingsHandler) WithSend(
 	return h
 }
 
+// WithImport wires the Fireflies key resolver so past meetings can be pulled by
+// id (download-only; no attendee email).
+func (h *RecordingsHandler) WithImport(keyFor func(ctx context.Context, org db.OrgID) string) *RecordingsHandler {
+	h.firefliesKeyFor = keyFor
+	return h
+}
+
 func (h *RecordingsHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/recordings", h.auth.RequirePerm(rbac.ViewOrgStatus, h.list))
 	mux.HandleFunc("GET /api/v1/recordings/{dir}/files/{name}", h.auth.RequirePerm(rbac.ViewOrgStatus, h.file))
 	mux.HandleFunc("POST /api/v1/recordings/{dir}/send", h.auth.RequirePerm(rbac.ManagePolicies, h.send))
+	mux.HandleFunc("POST /api/v1/recordings/import", h.auth.RequirePerm(rbac.ManagePolicies, h.importFireflies))
+	mux.HandleFunc("POST /api/v1/recordings/sync", h.auth.RequirePerm(rbac.ManagePolicies, h.syncFireflies))
+}
+
+// existingTranscriptIDs returns the set of Fireflies transcript ids already
+// downloaded, derived from the folder names (…_<id>).
+func (h *RecordingsHandler) existingTranscriptIDs() map[string]bool {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(h.root)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if i := strings.LastIndex(name, "_"); i >= 0 && i+1 < len(name) {
+			out[name[i+1:]] = true
+		}
+	}
+	return out
+}
+
+// syncFireflies lists all Fireflies transcripts and downloads any not already
+// present, so the whole meeting history back-fills in one action. Download-only:
+// it does NOT email attendees.
+func (h *RecordingsHandler) syncFireflies(w http.ResponseWriter, r *http.Request) {
+	if h.firefliesKeyFor == nil {
+		writeErr(w, http.StatusServiceUnavailable, "Fireflies import is not configured")
+		return
+	}
+	key := h.firefliesKeyFor(r.Context(), h.adminOrg)
+	if key == "" {
+		writeErr(w, http.StatusBadRequest, "no Fireflies API key configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	defer cancel()
+	c := fireflies.NewClient(key)
+	have := h.existingTranscriptIDs()
+
+	const pageSize = 50
+	imported, skipped, failed := 0, 0, 0
+	var importedTitles []string
+	for skip := 0; skip < 5000; skip += pageSize { // hard cap as a safety net
+		refs, err := c.ListTranscripts(ctx, pageSize, skip)
+		if err != nil {
+			// If we already imported some, report partial success rather than 502.
+			if imported == 0 && skipped == 0 {
+				writeErr(w, http.StatusBadGateway, "fireflies: "+err.Error())
+				return
+			}
+			break
+		}
+		if len(refs) == 0 {
+			break
+		}
+		for _, ref := range refs {
+			if have[ref.ID] {
+				skipped++
+				continue
+			}
+			t, err := c.GetTranscript(ctx, ref.ID)
+			if err != nil {
+				failed++
+				continue
+			}
+			t.AudioURL, t.VideoURL = c.GetMedia(ctx, ref.ID)
+			if _, err := c.Download(ctx, h.root, t); err != nil {
+				failed++
+				continue
+			}
+			have[ref.ID] = true
+			imported++
+			importedTitles = append(importedTitles, t.Title)
+		}
+		if len(refs) < pageSize {
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"imported": imported, "skipped": skipped, "failed": failed, "titles": importedTitles,
+	})
+}
+
+// importFireflies pulls a Fireflies transcript + summary by id into the
+// recordings folder, so a meeting that predates the webhook shows up in the
+// list. Download-only: it deliberately does NOT email attendees.
+func (h *RecordingsHandler) importFireflies(w http.ResponseWriter, r *http.Request) {
+	if h.firefliesKeyFor == nil {
+		writeErr(w, http.StatusServiceUnavailable, "Fireflies import is not configured")
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	if req.ID == "" {
+		writeErr(w, http.StatusBadRequest, "transcript id is required")
+		return
+	}
+	key := h.firefliesKeyFor(r.Context(), h.adminOrg)
+	if key == "" {
+		writeErr(w, http.StatusBadRequest, "no Fireflies API key configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	c := fireflies.NewClient(key)
+	t, err := c.GetTranscript(ctx, req.ID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "fireflies: "+err.Error())
+		return
+	}
+	t.AudioURL, t.VideoURL = c.GetMedia(ctx, req.ID)
+	dir, err := c.Download(ctx, h.root, t)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "download failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "dir": filepath.Base(dir), "title": t.Title})
 }
 
 type recFile struct {

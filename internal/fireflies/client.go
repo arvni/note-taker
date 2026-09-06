@@ -108,6 +108,28 @@ func (c *Client) GetTranscript(ctx context.Context, id string) (*Transcript, err
 	return &out.Transcript, nil
 }
 
+// TranscriptRef is a lightweight listing entry (no sentences/summary).
+type TranscriptRef struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	DateString string `json:"dateString"`
+}
+
+// ListTranscripts returns a page of the workspace's transcripts, newest first,
+// so the app can discover and back-fill meetings that predate the webhook.
+func (c *Client) ListTranscripts(ctx context.Context, limit, skip int) ([]TranscriptRef, error) {
+	const q = `query L($limit: Int, $skip: Int) {
+  transcripts(limit: $limit, skip: $skip) { id title dateString }
+}`
+	var out struct {
+		Transcripts []TranscriptRef `json:"transcripts"`
+	}
+	if err := c.do(ctx, q, map[string]any{"limit": limit, "skip": skip}, &out); err != nil {
+		return nil, err
+	}
+	return out.Transcripts, nil
+}
+
 // GetMedia best-effort fetches the audio/video URLs (paid plans only). On a
 // paid-required or any error it returns empty strings without failing.
 func (c *Client) GetMedia(ctx context.Context, id string) (audioURL, videoURL string) {

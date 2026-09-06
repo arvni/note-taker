@@ -626,15 +626,52 @@ function SendCell({ dir }: { dir: string }) {
 function RecordingsView() {
   const [meetings, setMeetings] = useState<RecMeeting[] | null>(null);
   const [err, setErr] = useState("");
-  useEffect(() => { api.recordings().then((r) => setMeetings(r.meetings)).catch((e) => setErr(e.message)); }, []);
+  const [impId, setImpId] = useState("");
+  const [impBusy, setImpBusy] = useState(false);
+  const [impMsg, setImpMsg] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
+  function reload() { api.recordings().then((r) => setMeetings(r.meetings)).catch((e) => setErr(e.message)); }
+  useEffect(() => { reload(); }, []);
+
+  async function syncAll() {
+    setSyncBusy(true); setErr(""); setImpMsg("");
+    try {
+      const r = await api.syncRecordings();
+      const parts = [`✓ ${r.imported} imported`, `${r.skipped} already present`];
+      if (r.failed) parts.push(`${r.failed} failed`);
+      setImpMsg(parts.join(" · ")); reload();
+    } catch (e: any) { setErr(e.message); }
+    finally { setSyncBusy(false); }
+  }
   const fmt = (t: string) => t ? new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "\u2014";
   const kb = (n: number) => n < 1024 ? n + " B" : (n / 1024).toFixed(0) + " KB";
   const fileURL = (dir: string, name: string, dl?: boolean) =>
     `/api/v1/recordings/${encodeURIComponent(dir)}/files/${encodeURIComponent(name)}` + (dl ? "?dl=1" : "");
 
+  async function importById() {
+    const id = impId.trim();
+    if (!id) return;
+    setImpBusy(true); setErr(""); setImpMsg("");
+    try {
+      const r = await api.importRecording(id);
+      setImpMsg(`\u2713 Imported "${r.title}"`); setImpId(""); reload();
+    } catch (e: any) { setErr(e.message); }
+    finally { setImpBusy(false); }
+  }
+
   return (
     <main>
-      <section className="toolbar"><div><strong>Meeting files</strong> <span className="muted">transcripts &amp; summaries downloaded from Fireflies</span></div></section>
+      <section className="toolbar">
+        <div style={{ flex: 1 }}><strong>Meeting files</strong> <span className="muted">transcripts &amp; summaries downloaded from Fireflies</span></div>
+        <button className="btn" disabled={syncBusy} onClick={syncAll} title="List all Fireflies meetings and download any not yet imported">
+          {syncBusy ? "Syncing\u2026" : "\u21bb Sync from Fireflies"}
+        </button>
+        <input className="search" style={{ flex: "0 0 230px", minWidth: 0 }} placeholder="\u2026or import one by transcript ID"
+          value={impId} onChange={(e) => setImpId(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") importById(); }} />
+        <button className="btn primary" disabled={!impId.trim() || impBusy} onClick={importById}>{impBusy ? "Importing\u2026" : "Import"}</button>
+      </section>
+      {impMsg && <div className="banner" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>{impMsg}</div>}
       {err && <div className="banner bad">{err}</div>}
       <section className="card">
         <table>
