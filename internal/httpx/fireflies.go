@@ -218,9 +218,6 @@ func recordingEmailBody(title, dateString, transcriptURL string, brand onboardin
 		fmt.Fprintf(&b, " (%s)", html.EscapeString(dateString))
 	}
 	fmt.Fprintf(&b, ".</p>")
-	if transcriptURL != "" {
-		fmt.Fprintf(&b, "<p><a href=\"%s\">Open in Fireflies</a></p>", html.EscapeString(transcriptURL))
-	}
 	if overview != "" {
 		fmt.Fprintf(&b, "<pre style=\"white-space:pre-wrap;font-family:inherit\">%s</pre>", html.EscapeString(overview))
 	}
