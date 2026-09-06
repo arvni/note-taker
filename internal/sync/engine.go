@@ -42,6 +42,7 @@ type MappingRepo interface {
 	MarkUpdated(ctx context.Context, mappingID int64, sourceUpdatedAt *time.Time) error
 	MarkCancelled(ctx context.Context, mappingID int64) error
 	SharedDestinationEventID(ctx context.Context, sourceEventID string) (string, bool, error)
+	SharedDestinationForMeeting(ctx context.Context, org db.OrgID, sourceEventID, title string, start *time.Time) (string, bool, error)
 	DestinationShared(ctx context.Context, destEventID string, excludeMappingID int64) (bool, error)
 }
 
@@ -106,9 +107,10 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 		if !ok {
 			continue // missing start/end — cannot create a valid destination event
 		}
-		// Dedup: if a co-attendee already synced this exact meeting (same source
-		// event id), reuse their destination event instead of creating a duplicate.
-		if sharedID, ok, err := e.repo.SharedDestinationEventID(ctx, m.SourceEventID); err == nil && ok {
+		// Dedup: if a co-attendee already synced this meeting (same source event
+		// id, or same title + start time for externally-organized invites whose
+		// per-attendee ids differ), reuse their destination event.
+		if sharedID, ok, err := e.repo.SharedDestinationForMeeting(ctx, org, m.SourceEventID, m.Title, m.StartsAt); err == nil && ok {
 			if err := e.repo.MarkCreated(ctx, m.ID, sharedID, m.SourceUpdatedAt); err != nil {
 				return rep, err
 			}

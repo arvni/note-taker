@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/arvinizadi/fathom/internal/db"
@@ -249,6 +250,41 @@ func (r *Repo) SharedDestinationEventID(ctx context.Context, sourceEventID strin
 	return id, true, nil
 }
 
+// SharedDestinationForMeeting finds an existing destination event for the same
+// meeting, so co-attendees collapse onto one Fathom event (spec §42). It matches
+// first on the exact source_event_id (identical invite id); then — because
+// different attendees' calendar copies of the same externally-organized invite
+// can carry different ids (e.g. a Zoho id vs an Exchange GlobalObjectId) — falls
+// back to an exact normalized-title + start-time match within the org.
+func (r *Repo) SharedDestinationForMeeting(ctx context.Context, org db.OrgID, sourceEventID, title string, start *time.Time) (string, bool, error) {
+	if id, ok, err := r.SharedDestinationEventID(ctx, sourceEventID); err != nil || ok {
+		return id, ok, err
+	}
+	want := normalizeTitle(title)
+	if start == nil || want == "" {
+		return "", false, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.destination_event_id, coalesce(m.title,'')
+		FROM event_mappings m JOIN employees e ON e.id = m.employee_id
+		WHERE e.organization_id = $1 AND m.cancelled_at IS NULL
+		  AND m.destination_event_id IS NOT NULL AND m.starts_at = $2`, org, *start)
+	if err != nil {
+		return "", false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, evTitle string
+		if err := rows.Scan(&id, &evTitle); err != nil {
+			return "", false, err
+		}
+		if normalizeTitle(evTitle) == want {
+			return id, true, nil
+		}
+	}
+	return "", false, rows.Err()
+}
+
 // DestinationShared reports whether another active mapping still references the
 // same destination event (a co-attendee), so cancelling one attendee must not
 // delete the shared event.
@@ -286,6 +322,66 @@ func (r *Repo) SourceAttendees(ctx context.Context, org db.OrgID, destEventIDs [
 		out[id] = append(out[id], email)
 	}
 	return out, rows.Err()
+}
+
+// Attendee is an org employee who had a matched meeting on their calendar.
+type Attendee struct {
+	Email string
+	Name  string
+}
+
+// MatchAttendees finds the org's employees whose synced calendar had an event
+// corresponding to a recorded meeting, so its transcript/summary can be emailed
+// to the people who attended. A candidate mapping is one whose start_at falls
+// within ±window of the meeting start; the title is then matched by a normalized
+// substring compare (either direction) when both titles are present. Returns
+// distinct attendees (org-scoped for the tenant guard).
+func (r *Repo) MatchAttendees(ctx context.Context, org db.OrgID, start time.Time, window time.Duration, title string) ([]Attendee, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT e.email, coalesce(e.name,''), coalesce(m.title,'')
+		FROM event_mappings m JOIN employees e ON e.id = m.employee_id
+		WHERE e.organization_id = $1
+		  AND m.cancelled_at IS NULL
+		  AND m.starts_at IS NOT NULL
+		  AND m.starts_at BETWEEN $2 AND $3`,
+		org, start.Add(-window), start.Add(window))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	want := normalizeTitle(title)
+	seen := map[string]bool{}
+	var out []Attendee
+	for rows.Next() {
+		var email, name, evTitle string
+		if err := rows.Scan(&email, &name, &evTitle); err != nil {
+			return nil, err
+		}
+		if want != "" {
+			got := normalizeTitle(evTitle)
+			if got == "" || !(got == want || strings.Contains(got, want) || strings.Contains(want, got)) {
+				continue
+			}
+		}
+		if seen[email] {
+			continue
+		}
+		seen[email] = true
+		out = append(out, Attendee{Email: email, Name: name})
+	}
+	return out, rows.Err()
+}
+
+// normalizeTitle lowercases and strips non-alphanumeric characters so meeting
+// titles from different systems (Fireflies vs the calendar) compare loosely.
+func normalizeTitle(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // ActiveDestinationEventIDs returns the set of destination event ids still
