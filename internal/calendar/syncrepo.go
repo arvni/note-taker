@@ -337,11 +337,14 @@ type Attendee struct {
 // substring compare (either direction) when both titles are present. Returns
 // distinct attendees (org-scoped for the tenant guard).
 func (r *Repo) MatchAttendees(ctx context.Context, org db.OrgID, start time.Time, window time.Duration, title string) ([]Attendee, error) {
+	// Note: cancelled mappings are intentionally included — recordings are for
+	// meetings that already happened, whose mappings the sync engine has usually
+	// marked cancelled (source event aged out of the scan). Someone who had the
+	// meeting is still a valid recipient regardless of that flag.
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT e.email, coalesce(e.name,''), coalesce(m.title,'')
 		FROM event_mappings m JOIN employees e ON e.id = m.employee_id
 		WHERE e.organization_id = $1
-		  AND m.cancelled_at IS NULL
 		  AND m.starts_at IS NOT NULL
 		  AND m.starts_at BETWEEN $2 AND $3`,
 		org, start.Add(-window), start.Add(window))
