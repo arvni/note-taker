@@ -75,25 +75,29 @@ func (h *FirefliesWebhookHandler) receive(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	var p struct {
-		MeetingID    string `json:"meetingId"`
-		TranscriptID string `json:"transcriptId"`
-		EventType    string `json:"eventType"`
-	}
-	if err := json.Unmarshal(body, &p); err != nil {
+	// Log the raw body so the exact Fireflies schema is visible (ids only; small).
+	log.Printf("fireflies webhook: body=%s", truncateBody(body))
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
-	id := p.MeetingID
+	// Tolerant extraction: Fireflies' payload shape varies (meetingId vs
+	// transcriptId vs nested), so search common id keys recursively.
+	id := firstStringByKey(root, map[string]bool{"meetingid": true, "transcriptid": true, "meeting_id": true, "transcript_id": true})
 	if id == "" {
-		id = p.TranscriptID
+		if s, ok := root["id"].(string); ok {
+			id = s
+		}
 	}
+	eventType := firstStringByKey(root, map[string]bool{"eventtype": true, "event_type": true, "type": true})
 	if id == "" {
 		// Ack unknown/ping payloads so Fireflies doesn't retry.
+		log.Printf("fireflies webhook: no meeting/transcript id in payload (event=%q) — ack", eventType)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	log.Printf("fireflies webhook: event=%q id=%s", p.EventType, id)
+	log.Printf("fireflies webhook: event=%q id=%s", eventType, id)
 
 	key := h.keyFor(r.Context(), h.adminOrg)
 	if key == "" {
@@ -252,6 +256,41 @@ func orDefault(s, d string) string {
 		return d
 	}
 	return s
+}
+
+// firstStringByKey recursively searches a decoded JSON value for the first
+// non-empty string held under any key whose lowercased name is in keys.
+func firstStringByKey(v any, keys map[string]bool) string {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if keys[strings.ToLower(k)] {
+				if s, ok := val.(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+		for _, val := range t {
+			if s := firstStringByKey(val, keys); s != "" {
+				return s
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if s := firstStringByKey(val, keys); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func truncateBody(b []byte) string {
+	const max = 600
+	if len(b) > max {
+		return string(b[:max]) + "…"
+	}
+	return string(b)
 }
 
 func validHubSignature(secret, header string, body []byte) bool {
