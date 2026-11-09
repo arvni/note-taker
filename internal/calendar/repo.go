@@ -97,9 +97,17 @@ func (r *Repo) UpsertMapping(ctx context.Context, e MinimizedEvent) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO event_mappings
 			(employee_id, calendar_uid, source_event_id, title, starts_at, ends_at,
-			 meeting_provider, meeting_url, description, location, source_updated_at, last_seen_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+			 meeting_provider, meeting_url, description, location, source_updated_at, last_seen_at, key_version)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), 2)
 		ON CONFLICT (employee_id, source_event_id) DO UPDATE SET
+			-- If the time moved without Zoho bumping lastmodifiedtime (e.g. a
+			-- series occurrence), force a destination update by clearing the
+			-- synced marker.
+			destination_synced_at = CASE
+				WHEN event_mappings.starts_at IS DISTINCT FROM EXCLUDED.starts_at
+				  OR event_mappings.ends_at IS DISTINCT FROM EXCLUDED.ends_at
+				THEN NULL ELSE event_mappings.destination_synced_at END,
+			key_version = 2,
 			calendar_uid = EXCLUDED.calendar_uid, title = EXCLUDED.title,
 			starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at,
 			meeting_provider = EXCLUDED.meeting_provider, meeting_url = EXCLUDED.meeting_url,

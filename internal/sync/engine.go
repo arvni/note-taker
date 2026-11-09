@@ -7,6 +7,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -44,6 +45,7 @@ type MappingRepo interface {
 	SharedDestinationEventID(ctx context.Context, sourceEventID string) (string, bool, error)
 	SharedDestinationForMeeting(ctx context.Context, org db.OrgID, sourceEventID, title string, start *time.Time) (string, bool, error)
 	DestinationShared(ctx context.Context, destEventID string, excludeMappingID int64) (bool, error)
+	ReplaceDestination(ctx context.Context, oldDestEventID, newDestEventID string) error
 }
 
 // Engine runs the per-employee synchronization.
@@ -140,8 +142,21 @@ func (e *Engine) SyncEmployee(ctx context.Context, org db.OrgID, employeeID int6
 			continue
 		}
 		if err := dest.UpdateEvent(ctx, m.DestinationEventID, ev); err != nil {
-			log.Printf("sync update employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
-			continue
+			if !errors.Is(err, google.ErrNotFound) {
+				log.Printf("sync update employee=%d src=%s: %v", employeeID, m.SourceEventID, err)
+				continue
+			}
+			// The event was deleted from the Fathom calendar by hand: recreate it
+			// and repoint every mapping (co-attendees too) at the new event.
+			id, cerr := dest.CreateEvent(ctx, ev)
+			if cerr != nil {
+				log.Printf("sync recreate employee=%d src=%s: %v", employeeID, m.SourceEventID, cerr)
+				continue
+			}
+			if err := e.repo.ReplaceDestination(ctx, m.DestinationEventID, id); err != nil {
+				return rep, err
+			}
+			rep.Created++
 		}
 		if err := e.repo.MarkUpdated(ctx, m.ID, m.SourceUpdatedAt); err != nil {
 			return rep, err

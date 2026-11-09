@@ -53,6 +53,11 @@ func (r *Repo) ListToUpdate(ctx context.Context, employeeID int64) ([]PendingEve
 
 // ListToCancel returns mappings with a destination event that were not seen in
 // the current scan (i.e. cancelled at the source) (spec §15 objective).
+//
+// The scan only asks Zoho for events from "now" onward, so a meeting that has
+// already ended is absent simply because it is over — not because it was
+// cancelled. Only events that have not ended yet are eligible, otherwise every
+// meeting would be deleted from the Fathom calendar the moment it finished.
 func (r *Repo) ListToCancel(ctx context.Context, employeeID int64, scanStart time.Time) ([]PendingEvent, error) {
 	return r.listPending(ctx, `
 		SELECT id, employee_id, calendar_uid, source_event_id, coalesce(title,''),
@@ -60,7 +65,8 @@ func (r *Repo) ListToCancel(ctx context.Context, employeeID int64, scanStart tim
 		       source_updated_at, destination_event_id, coalesce(description,''), coalesce(location,'')
 		FROM event_mappings
 		WHERE employee_id = $1 AND destination_event_id IS NOT NULL AND cancelled_at IS NULL
-		  AND last_seen_at < $2`, employeeID, scanStart)
+		  AND last_seen_at < $2
+		  AND (ends_at IS NULL OR ends_at > $2)`, employeeID, scanStart)
 }
 
 func (r *Repo) listPending(ctx context.Context, q string, args ...any) ([]PendingEvent, error) {
@@ -98,6 +104,31 @@ func (r *Repo) MarkUpdated(ctx context.Context, mappingID int64, sourceUpdatedAt
 		UPDATE event_mappings SET destination_synced_at = $1, updated_at = now()
 		WHERE id = $2`, sourceUpdatedAt, mappingID)
 	return err
+}
+
+// ReplaceDestination repoints every mapping that referenced a destination event
+// (which no longer exists) at its recreated replacement.
+func (r *Repo) ReplaceDestination(ctx context.Context, oldDestEventID, newDestEventID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE event_mappings SET destination_event_id = $2, updated_at = now()
+		WHERE destination_event_id = $1`, oldDestEventID, newDestEventID)
+	return err
+}
+
+// ForceResync marks every active, not-yet-ended synced meeting as needing a
+// destination update, so the next sync run rewrites each Fathom calendar event
+// from the current Zoho data (and recreates any deleted by hand). Returns the
+// number of meetings queued.
+func (r *Repo) ForceResync(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE event_mappings SET destination_synced_at = NULL, updated_at = now()
+		WHERE destination_event_id IS NOT NULL AND cancelled_at IS NULL
+		  AND source_updated_at IS NOT NULL
+		  AND (ends_at IS NULL OR ends_at > now())`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // MarkCancelled records that a destination event was removed.
@@ -240,6 +271,7 @@ func (r *Repo) SharedDestinationEventID(ctx context.Context, sourceEventID strin
 	err := r.pool.QueryRow(ctx, `
 		SELECT destination_event_id FROM event_mappings
 		WHERE source_event_id = $1 AND destination_event_id IS NOT NULL AND cancelled_at IS NULL
+		  AND key_version >= 2
 		LIMIT 1`, sourceEventID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
@@ -268,7 +300,8 @@ func (r *Repo) SharedDestinationForMeeting(ctx context.Context, org db.OrgID, so
 		SELECT m.destination_event_id, coalesce(m.title,'')
 		FROM event_mappings m JOIN employees e ON e.id = m.employee_id
 		WHERE e.organization_id = $1 AND m.cancelled_at IS NULL
-		  AND m.destination_event_id IS NOT NULL AND m.starts_at = $2`, org, *start)
+		  AND m.destination_event_id IS NOT NULL AND m.starts_at = $2
+		  AND m.key_version >= 2`, org, *start)
 	if err != nil {
 		return "", false, err
 	}

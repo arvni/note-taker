@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -168,6 +169,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return fmt.Errorf("%w: %s %s: status %d", ErrNotFound, method, path, resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("google: %s %s: status %d: %s", method, path, resp.StatusCode, truncate(raw))
 	}
@@ -184,6 +188,17 @@ func truncate(b []byte) string {
 		return string(b[:300]) + "…"
 	}
 	return string(b)
+}
+
+// ErrNotFound is returned when the destination event no longer exists (deleted
+// by hand in Google Calendar, or by another tool).
+var ErrNotFound = errors.New("google: event not found")
+
+// CheckAuth verifies the destination credential can still mint an access token
+// (e.g. detects a revoked/expired refresh token) without touching any event.
+func (c *Client) CheckAuth(ctx context.Context) error {
+	_, err := c.tokens.Token(ctx)
+	return err
 }
 
 // StaticToken is a trivial TokenSource for tests / static-token deployments.

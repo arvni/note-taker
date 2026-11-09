@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/arvinizadi/fathom/internal/alerts"
 	"github.com/arvinizadi/fathom/internal/audit"
 	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/config"
@@ -26,6 +27,7 @@ import (
 	"github.com/arvinizadi/fathom/internal/redisx"
 	"github.com/arvinizadi/fathom/internal/retention"
 	"github.com/arvinizadi/fathom/internal/sync"
+	"github.com/arvinizadi/fathom/internal/synccontrol"
 	"github.com/arvinizadi/fathom/internal/tokens"
 	"github.com/arvinizadi/fathom/internal/wire"
 	"github.com/arvinizadi/fathom/web"
@@ -112,7 +114,31 @@ func main() {
 		}
 		return oc.CalendarBase, nil
 	}
-	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, nil)
+	// Onboarding (invite e-mails) + admin alerts. When an employee's Zoho token
+	// becomes permanently invalid, they are re-sent a connect link and the
+	// admins are e-mailed (see internal/alerts).
+	tmpl, err := web.Templates()
+	if err != nil {
+		log.Fatalf("worker: templates: %v", err)
+	}
+	onbResolve := wire.OnboardingResolver(appSettings, cfg)
+	onbSvc := onboarding.NewService(onboarding.NewRepo(pool), empStore{empRepo}, onbResolve, auditLog, tmpl,
+		cfg.PublicBaseURL, cfg.OnboardingTokenBytes, cfg.OnboardingTokenTTL)
+	notifier := alerts.New(onbResolve, cfg.AdminEmails, cfg.PublicBaseURL)
+	var runDisconnected []string // employees disconnected during the current sync run
+	reconnector := &alerts.Reconnector{
+		Invite:   onbSvc,
+		Notifier: notifier,
+		Lookup: func(ctx context.Context, org db.OrgID, id int64) (string, string, error) {
+			e, err := empRepo.GetByID(ctx, org, id)
+			if err != nil {
+				return "", "", err
+			}
+			return e.Name, e.Email, nil
+		},
+		OnDisconnect: func(email string) { runDisconnected = append(runDisconnected, email) },
+	}
+	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, reconnector)
 
 	calRepo := calendar.NewRepo(pool)
 	calSvc := calendar.NewService(tokenMgr, calendarBaseFor, calRepo, empRepo, auditLog, cfg.SyncAllEvents)
@@ -178,13 +204,6 @@ func main() {
 	// reconcile (invite new, offboard inactive). Requires a directory users URL +
 	// an org-level refresh token; otherwise employees onboard via CSV import.
 	if cfg.ZohoDirectoryUsersURL != "" && cfg.ZohoDirectoryRefreshToken != "" {
-		tmpl, err := web.Templates()
-		if err != nil {
-			log.Fatalf("worker: templates: %v", err)
-		}
-		resolve := wire.OnboardingResolver(appSettings, cfg)
-		onbSvc := onboarding.NewService(onboarding.NewRepo(pool), empStore{empRepo}, resolve, auditLog, tmpl,
-			cfg.PublicBaseURL, cfg.OnboardingTokenBytes, cfg.OnboardingTokenTTL)
 		offboarder := tokens.NewOffboarder(credStore, zohoRevokerFor, empRepo, auditLog)
 		reconciler := directory.NewReconciler(empRepo, onbSvc, offboarder)
 		dirClient := directory.NewZohoClient(cfg.ZohoDirectoryUsersURL)
@@ -229,15 +248,42 @@ func main() {
 
 	// Calendar sync loop. The cadence is configurable in the app (Settings →
 	// sync interval), re-read each cycle so a change takes effect without a
-	// restart; falls back to DIRECTORY_SYNC_INTERVAL. Runs immediately, then waits.
+	// restart; falls back to DIRECTORY_SYNC_INTERVAL. Runs immediately, then
+	// waits — but an admin can trigger "Sync now" / "Full resync" from the app,
+	// which is picked up within a few seconds (internal/synccontrol).
 	log.Printf("worker: calendar sync loop started (interval=%s, overridable in Settings)", syncInterval(ctx, appSettings, cfg))
-	for {
-		if err := syncAllEmployees(ctx, empRepo, engine); err != nil {
-			log.Printf("sync run: %v", err)
+	destCheck := func(ctx context.Context, org db.OrgID) (string, error) {
+		d, err := destStore.Get(ctx, org)
+		if err != nil {
+			return "", nil // no admin-connected calendar (env fallback or none): nothing to check
 		}
-		select {
-		case <-time.After(syncInterval(ctx, appSettings, cfg)):
-		case <-ctx.Done():
+		oc := googleOAuthFor(ctx, org)
+		if oc == nil {
+			return d.ConnectedEmail, nil
+		}
+		return d.ConnectedEmail, google.NewClient(cfg.GoogleCalendarBase, d.CalendarID, google.NewRefreshTokenSource(oc, d.RefreshToken)).CheckAuth(ctx)
+	}
+	trigger, full := "schedule", false
+	for {
+		runDisconnected = nil
+		rep := syncAllEmployees(ctx, empRepo, calRepo, engine, redisClient, notifier, destCheck, trigger, full)
+		rep.Disconnected = runDisconnected
+		if err := synccontrol.SaveLast(ctx, redisClient.Client, rep); err != nil {
+			log.Printf("sync run: save report: %v", err)
+		}
+		trigger, full = "schedule", false
+		deadline := time.Now().Add(syncInterval(ctx, appSettings, cfg))
+	wait:
+		for time.Now().Before(deadline) {
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				break wait
+			}
+			if ok, f, err := synccontrol.Take(ctx, redisClient.Client); err == nil && ok {
+				trigger, full = "manual", f
+				break wait
+			}
 		}
 		if ctx.Err() != nil {
 			break
@@ -294,24 +340,70 @@ func pollFathomRecordings(ctx context.Context, appSettings *tokens.AppSettingsSt
 
 // syncAllEmployees runs the sync engine for every authorized employee, isolating
 // per-employee failures so one bad account cannot stall the whole run (spec §42).
-func syncAllEmployees(ctx context.Context, empRepo *directory.Repo, engine *sync.Engine) error {
+// Before syncing an org it checks that the org's Fathom (Google) calendar is
+// still connected; if not, the org is skipped and the admins are e-mailed once
+// per outage. A full resync first forces every upcoming meeting to be rewritten.
+func syncAllEmployees(ctx context.Context, empRepo *directory.Repo, calRepo *calendar.Repo, engine *sync.Engine,
+	rdb *redisx.Client, notifier *alerts.Notifier,
+	destCheck func(ctx context.Context, org db.OrgID) (string, error), trigger string, full bool) synccontrol.RunReport {
+	rep := synccontrol.RunReport{StartedAt: time.Now(), Trigger: trigger, Full: full}
+
+	if full {
+		n, err := calRepo.ForceResync(ctx)
+		if err != nil {
+			log.Printf("sync run: full resync: %v", err)
+		}
+		rep.Requeued = n
+		log.Printf("sync run: full resync requested — %d upcoming meeting(s) will be rewritten", n)
+	}
+
 	emps, err := empRepo.ListAuthorized(ctx)
 	if err != nil {
-		return err
+		log.Printf("sync run: %v", err)
+		rep.FinishedAt = time.Now()
+		return rep
 	}
-	var created, updated, cancelled int
+
+	// Destination health, once per org per run.
+	destOK := map[db.OrgID]bool{}
 	for _, e := range emps {
-		rep, err := engine.SyncEmployee(ctx, e.Org, e.EmployeeID)
+		if _, seen := destOK[e.Org]; seen {
+			continue
+		}
+		account, err := destCheck(ctx, e.Org)
 		if err != nil {
+			destOK[e.Org] = false
+			rep.SkippedOrgs++
+			log.Printf("sync run: org=%d Fathom calendar disconnected: %v", e.Org, err)
+			if isNew, serr := synccontrol.SetDestError(ctx, rdb.Client, int64(e.Org), err.Error()); serr == nil && isNew {
+				notifier.DestinationDisconnected(ctx, e.Org, account, err.Error())
+			}
+			continue
+		}
+		destOK[e.Org] = true
+		if wasFailing, _ := synccontrol.ClearDestError(ctx, rdb.Client, int64(e.Org)); wasFailing {
+			notifier.DestinationRestored(ctx, e.Org)
+		}
+	}
+
+	for _, e := range emps {
+		if !destOK[e.Org] {
+			continue
+		}
+		rep.Employees++
+		r, err := engine.SyncEmployee(ctx, e.Org, e.EmployeeID)
+		if err != nil {
+			rep.Failed++
 			log.Printf("sync employee=%d org=%d: %v", e.EmployeeID, e.Org, err)
 			continue
 		}
-		created += rep.Created
-		updated += rep.Updated
-		cancelled += rep.Cancelled
+		rep.Created += r.Created
+		rep.Updated += r.Updated
+		rep.Cancelled += r.Cancelled
 	}
-	if len(emps) > 0 {
-		log.Printf("sync run: employees=%d created=%d updated=%d cancelled=%d", len(emps), created, updated, cancelled)
-	}
-	return nil
+	log.Printf("sync run (%s%s): employees=%d created=%d updated=%d cancelled=%d failed=%d skipped_orgs=%d",
+		trigger, map[bool]string{true: ", full", false: ""}[full],
+		rep.Employees, rep.Created, rep.Updated, rep.Cancelled, rep.Failed, rep.SkippedOrgs)
+	rep.FinishedAt = time.Now()
+	return rep
 }

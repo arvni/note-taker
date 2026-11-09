@@ -35,6 +35,17 @@ export interface AppSettings {
   google_oauth_client_id: string; has_google_secret: boolean; google_redirect_uri: string;
   sync_interval: string;
 }
+export interface SyncRun {
+  started_at: string; finished_at: string; trigger: string; full: boolean; requeued: number;
+  employees: number; created: number; updated: number; cancelled: number; failed: number;
+  skipped_orgs: number; disconnected: string[] | null;
+}
+export interface SyncStatus {
+  last_run: SyncRun | null; pending: boolean; pending_full: boolean;
+  destination_error: { message: string; since: string } | null;
+  disconnected: { id: number; email: string; name: string; onboarding_status: string; since: string }[];
+  interval_seconds?: number;
+}
 export interface RecFile { name: string; size: number }
 export interface RecMeeting { dir: string; id: string; title: string; date: string; duration: number; transcript_url: string; files: RecFile[] }
 export interface ImportResult {
@@ -83,6 +94,10 @@ export const api = {
   invite(id: number): Promise<{ ok: boolean }> { return req(`/api/v1/employees/${id}/invite`, { method: "POST" }); },
   destStatus(): Promise<{ connected: boolean; calendar_id: string; connected_email: string; connect_url: string }> { return req("/api/v1/destination/status"); },
   destEvents(): Promise<{ connected: boolean; calendar_id: string; events: DestEvent[] }> { return req("/api/v1/destination/events"); },
+  syncStatus(): Promise<SyncStatus> { return req("/api/v1/sync/status"); },
+  runSync(full: boolean): Promise<{ ok: boolean; full: boolean }> {
+    return req("/api/v1/sync/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ full }) });
+  },
   zohoSettings(): Promise<ZohoSettings> { return req("/api/v1/settings/zoho"); },
   appSettings(): Promise<AppSettings> { return req("/api/v1/settings/app"); },
   saveAppSettings(body: Record<string, string>): Promise<{ ok: boolean }> {

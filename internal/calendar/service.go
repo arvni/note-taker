@@ -133,7 +133,7 @@ func (s *Service) Scan(ctx context.Context, org db.OrgID, employeeID int64) (int
 			if err := s.repo.UpsertMapping(ctx, MinimizedEvent{
 				EmployeeID:      employeeID,
 				CalendarUID:     cal.UID,
-				SourceEventID:   ev.UID,
+				SourceEventID:   ev.OccurrenceKey(),
 				Title:           ev.Title,
 				StartsAt:        parseZohoTime(ev.Start),
 				EndsAt:          parseZohoTime(ev.End),

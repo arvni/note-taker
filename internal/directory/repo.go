@@ -229,3 +229,38 @@ func (r *Repo) ListAuthorized(ctx context.Context) ([]AuthorizedEmployee, error)
 	}
 	return out, rows.Err()
 }
+
+// Disconnected is an employee whose Zoho calendar link broke (token revoked or
+// rejected by Zoho) and who has not reconnected yet.
+type Disconnected struct {
+	ID               int64     `json:"id"`
+	Email            string    `json:"email"`
+	Name             string    `json:"name"`
+	OnboardingStatus string    `json:"onboarding_status"`
+	Since            time.Time `json:"since"`
+}
+
+// ListDisconnected returns the org's employees whose Zoho credential is no
+// longer active, excluding ones an admin deliberately revoked or disabled.
+func (r *Repo) ListDisconnected(ctx context.Context, org db.OrgID) ([]Disconnected, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT e.id, e.email, coalesce(e.name,''), e.onboarding_status, c.updated_at
+		FROM employees e
+		JOIN oauth_credentials c ON c.employee_id = e.id AND c.provider = 'zoho'
+		WHERE e.organization_id = $1 AND e.status = 'active' AND c.status <> 'active'
+		  AND e.onboarding_status NOT IN ('revoked', 'disabled', 'authorized')
+		ORDER BY e.email`, int64(org))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Disconnected{}
+	for rows.Next() {
+		var d Disconnected
+		if err := rows.Scan(&d.ID, &d.Email, &d.Name, &d.OnboardingStatus, &d.Since); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

@@ -43,6 +43,25 @@ type Event struct {
 	End         string
 	UpdatedAt   string // maps to Zoho lastmodifiedtime (spec §32 source_updated)
 	IsPrivate   bool
+	// Recurring is true when the event is one occurrence of a repeating series.
+	// Zoho returns every occurrence in the requested range with the SAME uid, so
+	// the uid alone does not identify an occurrence (see OccurrenceKey).
+	Recurring bool
+}
+
+// OccurrenceKey is the stable identity of this event for syncing. A one-off
+// event is keyed by its uid; an occurrence of a recurring series is keyed by
+// uid + "#" + its start time in UTC, so each weekly/daily instance is stored and
+// synced as its own Fathom calendar event instead of all occurrences
+// overwriting one row.
+func (e Event) OccurrenceKey() string {
+	if !e.Recurring {
+		return e.UID
+	}
+	if t := parseZohoTime(e.Start); t != nil {
+		return e.UID + "#" + t.UTC().Format("20060102T150405Z")
+	}
+	return e.UID + "#" + e.Start
 }
 
 // ListCalendars retrieves calendars for the authenticated user (spec §27).
@@ -109,7 +128,19 @@ func (c *APIClient) ListEvents(ctx context.Context, accessToken, calendarUID str
 			End:         end,
 			UpdatedAt:   str(m["lastmodifiedtime"]),
 			IsPrivate:   boolOf(m["isprivate"]),
+			Recurring:   str(m["rrule"]) != "" || str(m["recurrenceid"]) != "" || boolOf(m["isrep"]),
 		})
+	}
+	// Whatever fields Zoho sets, several entries sharing one uid in the same
+	// response are occurrences of one series.
+	seen := map[string]int{}
+	for _, ev := range events {
+		seen[ev.UID]++
+	}
+	for i := range events {
+		if seen[events[i].UID] > 1 {
+			events[i].Recurring = true
+		}
 	}
 	return events, nil
 }

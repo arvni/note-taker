@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings, type AppSettings, type RecMeeting } from "./api";
+import { api, type Employee, type Me, type Stats, type ImportResult, type EmployeeDetail, type DestEvent, type ZohoSettings, type AppSettings, type RecMeeting, type SyncStatus } from "./api";
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   authorized: { label: "Connected", cls: "ok" },
@@ -76,6 +76,7 @@ export function App() {
 
       {view === "settings" ? <SettingsView /> : view === "recordings" ? <RecordingsView /> : view === "calendar" ? <CalendarView /> : (
       <main>
+        <SyncPanel />
         <section className="stats">
           <Stat label="Total" value={stats?.Total} />
           <Stat label="Connected" value={stats?.Connected} cls="ok" />
@@ -315,6 +316,7 @@ function CalendarView() {
         <a className="btn" href={status?.connect_url || "#"}>Reconnect</a>
         <button className="btn primary" onClick={() => setAdding(true)}>Add event</button>
       </section>
+      <SyncPanel onDone={load} />
       {err && <div className="banner bad">{err} <button className="link" onClick={() => { setErr(""); load(); }}>retry</button></div>}
       {fathom && (
         <div className={"fathom-bar " + (fathom.registered ? "ok" : "")}>
@@ -334,6 +336,91 @@ function CalendarView() {
       <CalendarGrid events={data?.events ?? []} loading={!data && !err} />
       {adding && <AddEventModal onClose={() => setAdding(false)} onDone={() => { setAdding(false); load(); }} />}
     </main>
+  );
+}
+
+// ---- Sync status + manual resync ----
+
+const ago = (iso: string) => {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(iso).toLocaleString();
+};
+
+function SyncPanel({ onDone }: { onDone?: () => void }) {
+  const [st, setSt] = useState<SyncStatus | null>(null);
+  const [busy, setBusy] = useState<"" | "quick" | "full">("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  async function load() {
+    try { setSt(await api.syncStatus()); } catch (e: any) { setErr(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+
+  // While a requested sync is queued or running, poll until a newer run lands.
+  useEffect(() => {
+    if (!busy) return;
+    const before = st?.last_run?.finished_at || "";
+    const started = Date.now();
+    const t = setInterval(async () => {
+      try {
+        const s = await api.syncStatus();
+        setSt(s);
+        const fin = s.last_run?.finished_at || "";
+        if (!s.pending && fin && fin !== before && new Date(fin).getTime() >= started - 1000) {
+          clearInterval(t); setBusy("");
+          const r = s.last_run!;
+          setMsg(`✓ ${r.full ? "Full resync" : "Sync"} finished — ${r.employees} calendar(s): ${r.created} created, ${r.updated} updated, ${r.cancelled} removed${r.failed ? `, ${r.failed} failed` : ""}.`);
+          onDone?.();
+        }
+      } catch { /* keep polling */ }
+      if (Date.now() - started > 10 * 60 * 1000) { clearInterval(t); setBusy(""); }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [busy]);
+
+  async function run(full: boolean) {
+    if (full && !confirm("Full resync rewrites every upcoming meeting on the Fathom calendar from Zoho (and recreates any that were deleted by hand). Continue?")) return;
+    setErr(""); setMsg("");
+    try { await api.runSync(full); setBusy(full ? "full" : "quick"); }
+    catch (e: any) { setErr(e.message); }
+  }
+
+  const last = st?.last_run;
+  return (
+    <>
+      {st?.destination_error && (
+        <div className="banner bad">
+          ⚠️ <b>Fathom calendar disconnected</b> since {new Date(st.destination_error.since).toLocaleString()} — meetings are not reaching Fathom.{" "}
+          <a className="link" href="/admin/google/connect">Reconnect now</a>
+          <div className="muted" style={{ fontSize: 12 }}>{st.destination_error.message}</div>
+        </div>
+      )}
+      {st && st.disconnected.length > 0 && (
+        <div className="banner bad">
+          ⚠️ <b>{st.disconnected.length} employee calendar{st.disconnected.length > 1 ? "s" : ""} disconnected</b> from Zoho — a reconnect link was e-mailed:{" "}
+          {st.disconnected.map((d) => d.name || d.email).join(", ")}
+        </div>
+      )}
+      <section className="toolbar">
+        <div style={{ flex: 1 }}>
+          <strong>Calendar sync</strong>{" "}
+          <span className="muted">
+            {busy ? (st?.pending ? " · queued, starting in a few seconds…" : " · running…")
+              : last ? ` · last ${last.trigger === "manual" ? (last.full ? "full resync" : "manual sync") : "sync"} ${ago(last.finished_at)} — ${last.employees} calendar(s), ${last.created} created, ${last.updated} updated, ${last.cancelled} removed${last.failed ? `, ${last.failed} failed` : ""}`
+              : " · no run recorded yet"}
+            {st?.interval_seconds ? ` · runs every ${Math.round(st.interval_seconds / 60)} min` : ""}
+          </span>
+        </div>
+        <button className="btn" disabled={!!busy} onClick={() => run(false)}>{busy === "quick" ? <span className="spin">⏳ Syncing…</span> : "Sync now"}</button>
+        <button className="btn primary" disabled={!!busy} onClick={() => run(true)}>{busy === "full" ? <span className="spin">⏳ Resyncing…</span> : "Full resync"}</button>
+      </section>
+      {msg && <div className="banner" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>{msg} <button className="link" onClick={() => setMsg("")}>dismiss</button></div>}
+      {err && <div className="banner bad">{err} <button className="link" onClick={() => setErr("")}>dismiss</button></div>}
+    </>
   );
 }
 

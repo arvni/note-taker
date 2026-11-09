@@ -12,16 +12,19 @@ import (
 type Provider string
 
 const (
-	ProviderNone   Provider = ""
-	ProviderMeet   Provider = "google_meet"
-	ProviderZoom   Provider = "zoom"
-	ProviderTeams  Provider = "microsoft_teams"
+	ProviderNone  Provider = ""
+	ProviderMeet  Provider = "google_meet"
+	ProviderZoom  Provider = "zoom"
+	ProviderTeams Provider = "microsoft_teams"
 )
 
 var (
-	reMeet  = regexp.MustCompile(`(?i)https?://meet\.google\.com/[a-z0-9\-]+`)
-	reZoom  = regexp.MustCompile(`(?i)https?://[a-z0-9.\-]*zoom\.us/j/\d+[^\s"']*`)
-	reTeams = regexp.MustCompile(`(?i)https?://teams\.microsoft\.com/l/meetup-join/[^\s"']+`)
+	reMeet = regexp.MustCompile(`(?i)https?://meet\.google\.com/[a-z0-9\-]+`)
+	reZoom = regexp.MustCompile(`(?i)https?://[a-z0-9.\-]*zoom\.us/j/\d+[^\s"'<>]*`)
+	// Teams: classic work links (teams.microsoft.com/l/meetup-join/...), the newer
+	// short form (teams.microsoft.com/meet/...), and consumer/personal Teams
+	// (teams.live.com/meet/...). Outlook wraps links in <...>, so stop at < >.
+	reTeams = regexp.MustCompile(`(?i)https?://teams\.(?:microsoft|live)\.com/(?:l/meetup-join|meet)/[^\s"'<>]+`)
 )
 
 // Detection is the result of scanning an event for a meeting.

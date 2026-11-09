@@ -80,3 +80,36 @@ func TestListEvents_LiveShape(t *testing.T) {
 		t.Fatalf("meeting not detected: %+v", d)
 	}
 }
+
+func TestListEvents_RecurringOccurrencesGetDistinctKeys(t *testing.T) {
+	// Zoho returns each occurrence of a weekly series with the same uid.
+	body := `{"events":[
+	 {"title":"Opal Managers Meeting","uid":"series1@zoho.com","dateandtime":{"start":"20261109T110000+0400","end":"20261109T150000+0400"},"lastmodifiedtime":"20261020T065238Z"},
+	 {"title":"Opal Managers Meeting","uid":"series1@zoho.com","dateandtime":{"start":"20261116T110000+0400","end":"20261116T150000+0400"},"lastmodifiedtime":"20261020T065238Z"},
+	 {"title":"One-off","uid":"single@zoho.com","dateandtime":{"start":"20261110T090000+0400","end":"20261110T100000+0400"},"lastmodifiedtime":"20261020T065238Z"},
+	 {"title":"Monthly","uid":"monthly@zoho.com","rrule":"FREQ=MONTHLY;INTERVAL=1","dateandtime":{"start":"20261111T090000+0400","end":"20261111T100000+0400"},"lastmodifiedtime":"20261020T065238Z"}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	evs, err := NewAPIClient(srv.URL).ListEvents(context.Background(), "tok", "cal", time.Now(), time.Now().Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 4 {
+		t.Fatalf("got %d events, want 4", len(evs))
+	}
+	want := []string{
+		"series1@zoho.com#20261109T070000Z",
+		"series1@zoho.com#20261116T070000Z",
+		"single@zoho.com",
+		"monthly@zoho.com#20261111T050000Z",
+	}
+	for i, w := range want {
+		if got := evs[i].OccurrenceKey(); got != w {
+			t.Errorf("event %d key = %q, want %q", i, got, w)
+		}
+	}
+}

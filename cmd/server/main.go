@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arvinizadi/fathom/internal/alerts"
 	"github.com/arvinizadi/fathom/internal/audit"
 	"github.com/arvinizadi/fathom/internal/calendar"
 	"github.com/arvinizadi/fathom/internal/config"
@@ -247,7 +248,20 @@ func serve(cfg *config.Config) {
 		cfg.PublicBaseURL, cfg.OnboardingTokenBytes, cfg.OnboardingTokenTTL)
 
 	// Token lifecycle: refresh under a Redis lock, revoke, and detect revocation.
-	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, onboardingSvc)
+	// On a permanent failure the employee is re-invited and the admins are
+	// e-mailed (internal/alerts).
+	reconnector := &alerts.Reconnector{
+		Invite:   onboardingSvc,
+		Notifier: alerts.New(onboardingResolve, cfg.AdminEmails, cfg.PublicBaseURL),
+		Lookup: func(ctx context.Context, org db.OrgID, id int64) (string, string, error) {
+			e, err := empRepo.GetByID(ctx, org, id)
+			if err != nil {
+				return "", "", err
+			}
+			return e.Name, e.Email, nil
+		},
+	}
+	tokenMgr := tokens.NewManager(credStore, refresherFor, tokens.NewRedisLocker(redisClient), auditLog, reconnector)
 	revoker := tokens.NewRevoker(credStore, zohoRevokerFor, empRepo, auditLog)
 	offboarder := tokens.NewOffboarder(credStore, zohoRevokerFor, empRepo, auditLog)
 
@@ -358,6 +372,16 @@ func serve(cfg *config.Config) {
 	httpx.NewDestinationHandler(resolveDest, calRepo.SourceAttendees, auth).Register(mux)
 	httpx.NewGoogleConnectHandler(googleOAuthFor, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
 	httpx.NewAPIv1(empRepo, calRepo, reconciler, revoker, onboardingSvc, auth).Register(mux)
+	httpx.NewSyncControlHandler(redisClient.Client, empRepo, auth, func(r *http.Request) time.Duration {
+		if p, ok := httpx.PrincipalFrom(r); ok {
+			if a, err := appSettings.Get(r.Context(), db.OrgID(p.OrgID)); err == nil && a.SyncInterval != "" {
+				if d, err := time.ParseDuration(a.SyncInterval); err == nil && d >= time.Minute {
+					return d
+				}
+			}
+		}
+		return cfg.DirectorySyncInterval
+	}).Register(mux)
 	fathomKeyFor := func(ctx context.Context, org db.OrgID) string {
 		return wire.FathomAPIKey(ctx, appSettings, org, cfg.FathomAPIKey)
 	}
