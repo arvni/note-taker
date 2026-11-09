@@ -372,6 +372,7 @@ func serve(cfg *config.Config) {
 	httpx.NewDestinationHandler(resolveDest, calRepo.SourceAttendees, auth).Register(mux)
 	httpx.NewGoogleConnectHandler(googleOAuthFor, destStore, sessions, auth, cfg.GoogleCalendarID, sessionKey, cfg.IsProduction()).Register(mux)
 	httpx.NewAPIv1(empRepo, calRepo, reconciler, revoker, onboardingSvc, auth).Register(mux)
+	httpx.NewLegalHandler(tmpl, onboardingResolve, db.OrgID(cfg.AdminOrgID), cfg.RetentionMappings).Register(mux)
 	httpx.NewSyncControlHandler(redisClient.Client, empRepo, auth, func(r *http.Request) time.Duration {
 		if p, ok := httpx.PrincipalFrom(r); ok {
 			if a, err := appSettings.Get(r.Context(), db.OrgID(p.OrgID)); err == nil && a.SyncInterval != "" {

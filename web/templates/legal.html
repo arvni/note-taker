@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · {{.AppName}}</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a1a1a;line-height:1.6;max-width:760px;margin:0 auto;padding:32px 20px;background:#fff}
+  header{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:baseline;border-bottom:1px solid #e5e5e5;padding-bottom:12px;margin-bottom:24px}
+  header b{font-size:18px}
+  nav a{margin-right:14px;color:#1a56db;text-decoration:none}
+  nav a.on{font-weight:600;color:#1a1a1a}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:18px;margin:28px 0 6px}
+  .muted{color:#666;font-size:14px}
+  ul{padding-left:22px}
+  code{background:#f4f4f5;padding:1px 5px;border-radius:4px;font-size:13px}
+  footer{margin-top:40px;border-top:1px solid #e5e5e5;padding-top:12px;color:#666;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <b>{{.AppName}}</b>
+  <nav>
+    <a href="/" {{if eq .Page "home"}}class="on"{{end}}>Home</a>
+    <a href="/privacy" {{if eq .Page "privacy"}}class="on"{{end}}>Privacy policy</a>
+    <a href="/terms" {{if eq .Page "terms"}}class="on"{{end}}>Terms of service</a>
+    <a href="/login">Admin sign-in</a>
+  </nav>
+</header>
+
+{{if eq .Page "home"}}
+<h1>{{.AppName}}</h1>
+<p class="muted">An internal tool operated by {{.CompanyName}}.</p>
+<p>{{.AppName}} connects the work calendars of {{.CompanyName}} employees (Zoho Calendar) to the company's meeting-recording calendar, so that online meetings employees take part in can be recorded and summarized by the company's notetaker service.</p>
+<h2>How it works</h2>
+<ul>
+  <li>An employee is invited by their administrator and chooses to connect their Zoho Calendar with <b>read-only</b> access.</li>
+  <li>The app reads upcoming events on the employee's work calendars and copies qualifying online meetings (title, time, location, description and join link) to a single Google Calendar owned by {{.CompanyName}}.</li>
+  <li>The company's notetaker service watches that Google Calendar, joins the meetings, and the resulting notes are shared with the meeting's attendees.</li>
+</ul>
+<p>This service is only available to {{.CompanyName}} staff. It is not a public sign-up product.</p>
+{{end}}
+
+{{if eq .Page "privacy"}}
+<h1>Privacy policy</h1>
+<p class="muted">Last updated {{.Updated}} · Operated by {{.CompanyName}}</p>
+
+<h2>What this app is</h2>
+<p>{{.AppName}} is an internal tool of {{.CompanyName}} that syncs employees' work meetings from Zoho Calendar to a company-owned Google Calendar used for meeting recording. It is used only by {{.CompanyName}} and its employees.</p>
+
+<h2>Data we access</h2>
+<ul>
+  <li><b>Zoho Calendar (employees):</b> read-only access to the employee's calendars and events (<code>ZohoCalendar.calendar.READ</code>, <code>ZohoCalendar.event.READ</code>) and their basic Zoho profile (<code>aaaserver.profile.READ</code>) to identify the account. The app never creates, edits or deletes anything in an employee's Zoho Calendar.</li>
+  <li><b>Google Calendar (company calendar):</b> a single Google account controlled by {{.CompanyName}} grants access to its Google Calendar (<code>https://www.googleapis.com/auth/calendar</code>). The app creates, updates and removes the synced meeting events on that calendar, and lists its events to show them to administrators. No employee's personal Google data is accessed.</li>
+  <li><b>Administrators:</b> name and e-mail address from sign-in, to control access to the admin console.</li>
+</ul>
+
+<h2>What we store</h2>
+<ul>
+  <li>For each synced meeting: title, start and end time, location, description, meeting link and identifiers needed to keep the two calendars in sync. Private events and calendars marked personal are not synced.</li>
+  <li>OAuth tokens needed to keep the connections working, encrypted at rest. Tokens are never shown, logged or shared.</li>
+  <li>An audit log of security-relevant actions (connections, revocations, syncs), without token values.</li>
+  <li>Meeting notes produced by the company's notetaker service (transcript and summary), for sharing with the meeting's attendees.</li>
+</ul>
+
+<h2>How we use it</h2>
+<p>Data is used only to provide the calendar sync and meeting-notes features described above, and to operate and secure the service. It is not sold, not used for advertising, and not shared with third parties other than the service providers needed to run the feature: Zoho (source calendar), Google (company calendar) and the company's meeting notetaker service.</p>
+
+<h2>Google user data</h2>
+<p>{{.AppName}}'s use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Google Calendar data is used only to maintain the company's meeting-recording calendar and is not transferred to anyone except as necessary to provide that feature, for security, or to comply with law. No Google user data is used to develop, improve or train generalized AI or machine-learning models.</p>
+
+<h2>Retention and deletion</h2>
+<ul>
+  <li>Meeting sync records and audit entries are kept for up to {{.RetentionDays}} days and then deleted automatically.</li>
+  <li>When an employee disconnects, is offboarded, or an administrator revokes access, their stored tokens are revoked and erased, and their meetings stop syncing.</li>
+  <li>Employees can revoke access at any time from their Zoho account's connected-apps settings, or by asking their administrator. The company can revoke the Google connection at any time from its Google account's security settings.</li>
+</ul>
+
+<h2>Security</h2>
+<p>All traffic uses HTTPS. OAuth tokens and secrets are encrypted at rest. Access to the admin console is limited to named {{.CompanyName}} administrators.</p>
+
+<h2>Contact</h2>
+<p>Questions or requests about your data: {{if .SupportAddr}}<a href="mailto:{{.SupportAddr}}">{{.SupportAddr}}</a>{{else}}contact the {{.CompanyName}} IT administrator{{end}}.</p>
+{{end}}
+
+{{if eq .Page "terms"}}
+<h1>Terms of service</h1>
+<p class="muted">Last updated {{.Updated}} · Operated by {{.CompanyName}}</p>
+<ul>
+  <li>{{.AppName}} is an internal tool provided by {{.CompanyName}} to its employees and administrators for work purposes only.</li>
+  <li>Connecting a calendar is done at the request of {{.CompanyName}}; access can be revoked at any time as described in the <a href="/privacy">privacy policy</a>.</li>
+  <li>Users must not attempt to access data or accounts they are not authorized for, or interfere with the service.</li>
+  <li>The service is provided "as is" for internal business use, without warranties. {{.CompanyName}} may change or discontinue it at any time.</li>
+  <li>Use of the service is also subject to {{.CompanyName}}'s internal IT and data-protection policies.</li>
+</ul>
+<p>Contact: {{if .SupportAddr}}<a href="mailto:{{.SupportAddr}}">{{.SupportAddr}}</a>{{else}}the {{.CompanyName}} IT administrator{{end}}.</p>
+{{end}}
+
+<footer>© {{.Year}} {{.CompanyName}} · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></footer>
+</body>
+</html>
